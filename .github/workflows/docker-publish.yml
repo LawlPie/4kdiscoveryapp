@@ -1,0 +1,59 @@
+# Build the Docker image in GitHub's cloud and publish it to GHCR
+# (GitHub Container Registry). Portainer then just *pulls* this image — no
+# building on your NAS/host, which sidesteps the BuildKit/buildx errors.
+#
+# The image is published to:  ghcr.io/lawlpie/4kdiscoveryapp:latest
+# (image names are lowercased automatically by docker/metadata-action).
+
+name: Build and publish Docker image
+
+on:
+  push:
+    branches: [main]
+    # Re-build when app code or the Dockerfile changes.
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - ".github/workflows/docker-publish.yml"
+  workflow_dispatch: {}   # allow manual runs from the Actions tab
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write       # needed to push to GHCR
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # auto-provided, no setup needed
+
+      - name: Derive image tags & labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

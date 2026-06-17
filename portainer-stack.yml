@@ -3,29 +3,35 @@
 # =============================================================================
 # Deploy in Portainer:  Stacks → Add stack → name it "fourk-discovery".
 #
-# Choose ONE deployment method below, then paste this file (Web editor) or point
-# Portainer at your Git repo. Set values under "Environment variables" in the
-# Portainer UI to override the ${...} defaults (especially the webhook secrets).
+# Set values under "Environment variables" in the Portainer UI to override the
+# ${...} defaults below (especially the webhook secrets).
 #
-#  A) Git repository  (recommended — you have the source, no registry needed)
-#       - Build method: "Repository"
-#       - Repository URL: https://github.com/LawlPie/4kdiscoveryapp
-#       - Compose path: portainer-stack.yml
-#       - Keep the `build:` line active below; comment out the `image:` line.
+# RECOMMENDED — pull a pre-built image (no building on your host):
+#   1. The GitHub Actions workflow (.github/workflows/docker-publish.yml) builds
+#      and pushes  ghcr.io/lawlpie/4kdiscoveryapp:latest  on every push to main.
+#   2. Make that GHCR package "Public" (GitHub → your profile → Packages →
+#      4kdiscoveryapp → Package settings → Change visibility → Public), OR add
+#      ghcr.io registry credentials in Portainer → Registries.
+#   3. Portainer → Stacks → Add stack → Web editor → paste this file → Deploy.
+#      (Use "Repository" deploy with Compose path portainer-stack.yml if you
+#       prefer Portainer to read it straight from the repo.)
 #
-#  B) Pre-built image  (if you pushed to Docker Hub / GHCR / a private registry)
-#       - Build the image once:  docker build -t <registry>/fourk-discovery:latest .
-#       - Push it, then comment out `build:` and set `image:` to your tag.
+# ALTERNATIVE — build from source in Portainer (Repository deploy, build: .):
+#   Only works if your Docker host has a healthy BuildKit/buildx. If you hit
+#   "failed to list workers ... http2 frame too large", use the image method
+#   above instead — that is exactly the error this avoids.
 # =============================================================================
 
 services:
   fourk-discovery:
     container_name: fourk-discovery
 
-    # --- Method A: build from the cloned Git repo (Portainer Repository deploy)
-    build: .
-    # --- Method B: pull a pre-built image instead (comment out `build:` above)
-    # image: ${IMAGE:-ghcr.io/lawlpie/4kdiscoveryapp:latest}
+    # --- RECOMMENDED: pull the pre-built image from GHCR (no host build) -------
+    image: ${IMAGE:-ghcr.io/lawlpie/4kdiscoveryapp:latest}
+    pull_policy: always
+    # --- ALTERNATIVE: build from the cloned repo (needs working BuildKit) ------
+    #   Comment out the two `image:`/`pull_policy:` lines above and enable this:
+    # build: .
 
     restart: unless-stopped
 

@@ -45,18 +45,29 @@ The SQLite database is persisted to `./data/deals.db` on the host.
 
 ### Deploying with Portainer
 
-Use [`portainer-stack.yml`](portainer-stack.yml) instead of `docker-compose.yml`
-(named volume + UI-overridable env vars):
+Use [`portainer-stack.yml`](portainer-stack.yml) (named volume + UI-overridable
+env vars). It **pulls a pre-built image** so Portainer never has to build on your
+host — which avoids BuildKit errors common on NAS/self-hosted Docker
+(`failed to list workers … http2 frame too large`).
+
+**One-time:** GitHub Actions
+([`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml))
+builds and pushes `ghcr.io/lawlpie/4kdiscoveryapp:latest` on every push to
+`main`. After the first run, make the GHCR package **Public** (GitHub profile →
+**Packages** → `4kdiscoveryapp` → *Package settings* → *Change visibility*), or
+add `ghcr.io` credentials under Portainer → **Registries**.
+
+**Deploy:**
 
 1. Portainer → **Stacks → Add stack** → name it `fourk-discovery`
-2. Build method: **Repository**
-   - Repository URL: `https://github.com/LawlPie/4kdiscoveryapp`
-   - Compose path: `portainer-stack.yml`
+2. **Web editor** → paste `portainer-stack.yml` (or use **Repository** deploy,
+   Compose path `portainer-stack.yml`)
 3. Add your `DISCORD_WEBHOOK_URL` (or Telegram pair) under **Environment variables**
 4. **Deploy the stack** → open `http://<host>:8000`
 
 The SQLite database lives in the managed `fourk_data` volume and survives stack
-updates/redeploys.
+updates/redeploys. To update later, redeploy the stack to pull the newest
+`:latest` image.
 
 ### Trying it without scraping
 
