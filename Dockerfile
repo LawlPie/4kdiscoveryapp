@@ -17,10 +17,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps: lxml needs libxml2/libxslt; curl is used by the healthcheck.
+# System deps: curl is used by the container healthcheck.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential libxml2-dev libxslt1-dev curl \
+    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies first for better layer caching.

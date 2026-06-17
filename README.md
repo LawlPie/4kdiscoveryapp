@@ -107,12 +107,14 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 
 | Variable | Default | Description |
 |---|---|---|
-| `SCRAPER_BASE_URL` | …/filmer-serier/4k-ultra-hd | 4K category page to crawl |
-| `SITE_ROOT` | https://www.platekompaniet.no | Used to absolutise links |
 | `SCRAPE_INTERVAL_HOURS` | `24` | How often the scraper runs |
 | `SCRAPE_ON_STARTUP` | `true` | Run once immediately on boot |
-| `SCRAPE_DELAY_SECONDS` | `1.5` | Politeness delay between pages |
-| `SCRAPE_MAX_PAGES` | `40` | Pagination safety cap |
+| `SCRAPE_MAX_ITEMS` | `1000` | Max 4K items to fetch per run (Algolia caps paging at 1000) |
+| `SCRAPE_ONLY_ON_OFFER` | `false` | Store only items currently on offer/campaign |
+| `SCRAPE_DELAY_SECONDS` | `1.5` | Politeness delay between API pages |
+| `ALGOLIA_APP_ID` / `ALGOLIA_API_KEY` | (site defaults) | Platekompaniet's public search backend |
+| `ALGOLIA_INDEX` | `plate_prod_default_products` | Algolia product index |
+| `ALGOLIA_4K_FILTER` | `format_media:4K Ultra HD` | Facet filter isolating 4K releases |
 | `DISCORD_WEBHOOK_URL` | — | Enable Discord notifications |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — | Enable Telegram notifications |
 | `NOTIFY_MIN_DROP_PCT` | `0.0` | Min fractional price drop to alert (e.g. `0.1` = 10%) |
@@ -145,15 +147,23 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 
 ---
 
-## 🔧 Tuning the scraper
+## 🔧 How the scraper works
 
-Retailer HTML changes. If a scrape returns 0 items, update the CSS selectors in
-[`app/scraper.py`](app/scraper.py) → the `SELECTORS` dict. Each field accepts a
-list of candidate selectors that are tried in order, so you can add new ones
-without removing the existing fallbacks.
+Platekompaniet's website is a client-side SPA whose listing pages contain no
+product HTML — the catalogue is rendered in the browser from **Algolia**, a
+hosted search API. So instead of scraping HTML, the worker queries the same
+public, search-only Algolia index the site's own frontend uses
+([`app/scraper.py`](app/scraper.py)), filtered to `format_media:4K Ultra HD`.
+This returns clean structured JSON (title, price, regular price, campaign name,
+stock) — far more reliable than parsing markup.
 
-> **Be a good citizen.** This tool is for personal use. Keep the request delay
-> reasonable and respect Platekompaniet's `robots.txt` and terms of service.
+If a run returns 0 items, Platekompaniet has likely rotated its Algolia
+credentials or renamed the index/facet. Re-extract them from the site's JS
+bundle and set `ALGOLIA_APP_ID`, `ALGOLIA_API_KEY`, `ALGOLIA_INDEX`, and
+`ALGOLIA_4K_FILTER` via the environment.
+
+> **Be a good citizen.** This tool is for personal use. Keep the interval and
+> delay reasonable and respect Platekompaniet's terms of service.
 
 ---
 
@@ -165,7 +175,7 @@ without removing the existing fallbacks.
 │   ├── main.py            # FastAPI app + routes
 │   ├── config.py          # env-driven settings
 │   ├── database.py        # SQLite schema + queries
-│   ├── scraper.py         # BeautifulSoup scraper + pagination
+│   ├── scraper.py         # Algolia API client + pagination
 │   ├── scheduler.py       # APScheduler background worker
 │   ├── notifications.py   # Discord / Telegram webhooks
 │   ├── seed.py            # demo data

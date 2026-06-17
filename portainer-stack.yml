@@ -44,13 +44,12 @@ services:
       - fourk_data:/app/data
 
     environment:
-      # ----- Scraper -----
-      SCRAPER_BASE_URL: "${SCRAPER_BASE_URL:-https://www.platekompaniet.no/filmer-serier/4k-ultra-hd}"
-      SITE_ROOT: "${SITE_ROOT:-https://www.platekompaniet.no}"
+      # ----- Scraper (queries Platekompaniet's Algolia backend) -----
       SCRAPE_INTERVAL_HOURS: "${SCRAPE_INTERVAL_HOURS:-24}"
       SCRAPE_ON_STARTUP: "${SCRAPE_ON_STARTUP:-true}"
+      SCRAPE_MAX_ITEMS: "${SCRAPE_MAX_ITEMS:-1000}"
+      SCRAPE_ONLY_ON_OFFER: "${SCRAPE_ONLY_ON_OFFER:-false}"
       SCRAPE_DELAY_SECONDS: "${SCRAPE_DELAY_SECONDS:-1.5}"
-      SCRAPE_MAX_PAGES: "${SCRAPE_MAX_PAGES:-40}"
       TZ: "${TZ:-Europe/Oslo}"
 
       # ----- Notifications (set these in the Portainer env-vars panel) -----

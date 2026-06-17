@@ -54,6 +54,27 @@ class Settings:
     # Root used to turn relative product/image links into absolute URLs.
     SITE_ROOT: str = os.getenv("SITE_ROOT", "https://www.platekompaniet.no")
 
+    # ----- Algolia (Platekompaniet's product search backend) -------------
+    # Platekompaniet is a client-side SPA whose category/listing pages are
+    # rendered from Algolia, not server-side HTML. We therefore query the same
+    # public, search-only Algolia index the website's own frontend uses. These
+    # credentials are embedded in the site's JavaScript bundle; override via env
+    # if Platekompaniet ever rotates them.
+    ALGOLIA_APP_ID: str = os.getenv("ALGOLIA_APP_ID", "H4ZQSN0RMC")
+    ALGOLIA_API_KEY: str = os.getenv(
+        "ALGOLIA_API_KEY",
+        "NTA5ZGNjMjBlM2FmZTMwZWQxZTlkMTNiYzQxN2RiMTAwMmRm"
+        "YWE4ZDczZWQwYWQ3NTk3ZTA5ZTlhNGM4ZDFjYXRhZ0ZpbHRlcnM9",
+    )
+    ALGOLIA_INDEX: str = os.getenv("ALGOLIA_INDEX", "plate_prod_default_products")
+    # Facet filter that isolates strictly "4K Ultra HD" releases.
+    ALGOLIA_4K_FILTER: str = os.getenv("ALGOLIA_4K_FILTER", "format_media:4K Ultra HD")
+    # Algolia caps standard pagination at 1000 results; fetch in pages of this size.
+    SCRAPE_HITS_PER_PAGE: int = _get_int("SCRAPE_HITS_PER_PAGE", 100)
+    SCRAPE_MAX_ITEMS: int = _get_int("SCRAPE_MAX_ITEMS", 1000)
+    # If true, only store items currently on offer/campaign (smaller DB).
+    SCRAPE_ONLY_ON_OFFER: bool = _get_bool("SCRAPE_ONLY_ON_OFFER", False)
+
     # How often the background scraper runs, in hours.
     SCRAPE_INTERVAL_HOURS: float = _get_float("SCRAPE_INTERVAL_HOURS", 24.0)
     # Run a scrape immediately on startup (handy for a fresh install).

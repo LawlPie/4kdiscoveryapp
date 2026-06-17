@@ -1,323 +1,214 @@
 """
 The scraper worker.
 
-Fetches Platekompaniet's "4K Ultra HD" category pages, walks pagination, and
-extracts the fields we care about. It is built on `httpx` + `BeautifulSoup`,
-which is lightweight and polite — we send realistic browser headers, throttle
-between requests, and retry transient failures with backoff.
+Platekompaniet's website is a client-side SPA: its category pages contain no
+product HTML — the listing is rendered in the browser from **Algolia**, a hosted
+search API. Scraping the raw HTML therefore yields nothing. Instead we query the
+exact same public, search-only Algolia index the site's own frontend uses, which
+returns clean, structured JSON (title, price, regular price, campaign, stock).
 
-Because retailer markup changes over time, the parsing logic is intentionally
-defensive: it tries several selector strategies and tolerates missing fields
-rather than crashing the whole run. The CSS selectors live in `SELECTORS`
-below so they can be tuned in one place if the site is restructured.
+This is both more reliable and far gentler than HTML scraping: a handful of small
+JSON requests per run, with realistic browser headers and a polite delay.
+
+We filter strictly to "4K Ultra HD" via the `format_media` facet.
 """
 
 from __future__ import annotations
 
+import json
 import logging
-import re
 import time
-from typing import Any, Iterable
-from urllib.parse import urljoin, urlparse
+from typing import Any
+from urllib.parse import urlencode
 
 import httpx
-from bs4 import BeautifulSoup, Tag
 
 from .config import settings
-from .database import db_session, upsert_product
+from .database import db_session, get_favorite_ids, upsert_product
 from .notifications import notify_price_change
 
 logger = logging.getLogger("scraper")
 
-
-# --------------------------------------------------------------------------- #
-# Selector configuration — adjust here if Platekompaniet changes its markup.
-# Each entry is a list of candidate CSS selectors tried in order.
-# --------------------------------------------------------------------------- #
-SELECTORS: dict[str, list[str]] = {
-    # A single product "card" in the listing grid.
-    "product_card": [
-        "article.product-item",
-        "li.product-item",
-        "div.product-item",
-        "div.product-card",
-        "[data-product-id]",
-    ],
-    # The anchor that links to the product detail page (also gives us the slug).
-    "product_link": ["a.product-item-link", "a.product-link", "a[href*='/']"],
-    "title": [".product-item-name", ".product-name", "h2", "h3", ".name"],
-    "image": ["img"],
-    # Current (possibly discounted) price.
-    "price": [
-        "[data-price-type='finalPrice'] .price",
-        ".special-price .price",
-        ".price-final_price .price",
-        ".price",
-    ],
-    # Original price shown struck-through when on sale.
-    "old_price": [
-        "[data-price-type='oldPrice'] .price",
-        ".old-price .price",
-        ".price-was",
-        "del .price",
-        "del",
-    ],
-    # Campaign / promo badges, e.g. "Kjøp 2, få 30%".
-    "campaign": [".campaign", ".promo", ".badge", ".product-label", ".label"],
-    "stock": [".stock", ".availability", ".product-stock"],
-    # The "next page" pagination link.
-    "next_page": [
-        "a.action.next",
-        "a[rel='next']",
-        "li.pages-item-next a",
-        ".pagination a.next",
-    ],
-}
-
-# Phrases that confirm an item is genuinely a 4K Ultra HD release. We match
-# loosely (case-insensitive) against the card text to filter out plain Blu-ray.
-FOURK_MARKERS = ("4k ultra hd", "4k uhd", "ultra hd", "4k blu", "4k-blu")
+# Only pull back the attributes we actually use — keeps responses small/fast.
+_ATTRIBUTES = [
+    "name", "url", "image_url", "thumbnail_url",
+    "price", "active_price", "pimcore", "campaigns",
+    "stock_status", "custom_stock_status_plp", "in_stock",
+    "objectID", "sku", "product_id",
+]
 
 
-# --------------------------------------------------------------------------- #
-# HTTP helpers
-# --------------------------------------------------------------------------- #
-def _default_headers() -> dict[str, str]:
-    """Browser-like headers to reduce the chance of being blocked."""
+def _algolia_url() -> str:
+    return (
+        f"https://{settings.ALGOLIA_APP_ID}-dsn.algolia.net"
+        f"/1/indexes/{settings.ALGOLIA_INDEX}/query"
+    )
+
+
+def _headers() -> dict[str, str]:
+    """Algolia auth headers + a realistic UA so we blend in with normal traffic."""
     return {
+        "X-Algolia-Application-Id": settings.ALGOLIA_APP_ID,
+        "X-Algolia-API-Key": settings.ALGOLIA_API_KEY,
+        "Content-Type": "application/json",
         "User-Agent": settings.USER_AGENT,
-        "Accept": (
-            "text/html,application/xhtml+xml,application/xml;q=0.9,"
-            "image/avif,image/webp,*/*;q=0.8"
-        ),
-        "Accept-Language": "nb-NO,nb;q=0.9,en;q=0.8",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
+        "Accept": "application/json",
+        "Origin": settings.SITE_ROOT,
+        "Referer": settings.SITE_ROOT + "/",
     }
 
 
-def _fetch(client: httpx.Client, url: str) -> str | None:
-    """GET a URL with retries and exponential backoff. Returns HTML or None."""
+def _build_params(page: int) -> str:
+    """Build the URL-encoded Algolia `params` string for one page of results."""
+    facet_filters: list[list[str]] = [[settings.ALGOLIA_4K_FILTER]]
+    if settings.SCRAPE_ONLY_ON_OFFER:
+        facet_filters.append(["pimcore.OnOffer:true"])
+
+    return urlencode(
+        {
+            "query": "",
+            "hitsPerPage": settings.SCRAPE_HITS_PER_PAGE,
+            "page": page,
+            "facetFilters": json.dumps(facet_filters, ensure_ascii=False),
+            "attributesToRetrieve": json.dumps(_ATTRIBUTES),
+        }
+    )
+
+
+def _fetch_page(client: httpx.Client, page: int) -> dict[str, Any] | None:
+    """POST one search page with retries + backoff. Returns parsed JSON or None."""
+    body = {"params": _build_params(page)}
     for attempt in range(1, settings.SCRAPE_RETRIES + 1):
         try:
-            resp = client.get(url, timeout=settings.SCRAPE_TIMEOUT_SECONDS)
+            resp = client.post(
+                _algolia_url(),
+                json=body,
+                headers=_headers(),
+                timeout=settings.SCRAPE_TIMEOUT_SECONDS,
+            )
             resp.raise_for_status()
-            return resp.text
+            return resp.json()
         except httpx.HTTPError as exc:
             wait = settings.SCRAPE_DELAY_SECONDS * attempt
             logger.warning(
-                "Fetch failed (%s/%s) for %s: %s — retrying in %.1fs",
-                attempt, settings.SCRAPE_RETRIES, url, exc, wait,
+                "Algolia page %s failed (%s/%s): %s — retrying in %.1fs",
+                page, attempt, settings.SCRAPE_RETRIES, exc, wait,
             )
             time.sleep(wait)
-    logger.error("Giving up on %s after %s attempts", url, settings.SCRAPE_RETRIES)
+    logger.error("Giving up on page %s after %s attempts", page, settings.SCRAPE_RETRIES)
     return None
 
 
 # --------------------------------------------------------------------------- #
-# Parsing helpers
+# Parsing
 # --------------------------------------------------------------------------- #
-def _select_first(node: Tag, keys: Iterable[str]) -> Tag | None:
-    """Return the first element matching any of the candidate selectors."""
-    for selector in keys:
-        found = node.select_one(selector)
-        if found is not None:
-            return found
-    return None
-
-
-_PRICE_RE = re.compile(r"(\d[\d\s. ]*\d|\d)")
-
-
-def _parse_price(text: str | None) -> float | None:
-    """
-    Turn a Norwegian price string into a float.
-
-    Handles formats like "1 299,-", "kr 1.299,00", "299,90", "299" etc.
-    """
-    if not text:
-        return None
-    cleaned = text.replace(" ", " ").strip()
-    # Norwegian uses "," as the decimal separator and "."/space for thousands.
-    cleaned = cleaned.replace(".", "").replace(" ", "")
-    cleaned = cleaned.replace(",", ".")
-    match = re.search(r"\d+(?:\.\d+)?", cleaned)
-    if not match:
-        return None
+def _to_float(value: Any) -> float | None:
     try:
-        return round(float(match.group()), 2)
-    except ValueError:
+        if value is None or value == "":
+            return None
+        return round(float(value), 2)
+    except (TypeError, ValueError):
         return None
 
 
-def _slug_from_url(url: str) -> str:
-    """Derive a stable unique product id from its URL path."""
-    path = urlparse(url).path.strip("/")
-    slug = path.split("/")[-1] if path else url
-    # Drop file extensions like ".html" if present.
-    return re.sub(r"\.html?$", "", slug) or url
-
-
-def _looks_like_4k(card: Tag, title: str) -> bool:
-    """Heuristic: does this card represent a 4K Ultra HD release?"""
-    haystack = f"{title} {card.get_text(' ', strip=True)}".lower()
-    # Also consider explicit data attributes / class names some sites expose.
-    attrs = " ".join(
-        str(v) for v in card.attrs.values() if isinstance(v, (str, list))
-    ).lower()
-    haystack = f"{haystack} {attrs}"
-    return any(marker in haystack for marker in FOURK_MARKERS)
-
-
-def _extract_card(card: Tag) -> dict[str, Any] | None:
-    """Parse a single product card into our item dict, or None if unusable."""
-    link = _select_first(card, SELECTORS["product_link"])
-    href = link.get("href") if link else None
-    if not href:
+def _parse_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
+    """Turn one Algolia product hit into our normalised item dict."""
+    name = (hit.get("name") or "").strip()
+    url = hit.get("url")
+    if not name or not url:
         return None
-    url = urljoin(settings.SITE_ROOT, href)
 
-    title_el = _select_first(card, SELECTORS["title"])
-    title = (
-        title_el.get_text(strip=True)
-        if title_el
-        else (link.get("title") or link.get_text(strip=True))
+    pimcore = hit.get("pimcore") or {}
+    nok = (hit.get("price") or {}).get("NOK") or {}
+
+    # Current price: prefer the campaign-aware pimcore price, then active_price.
+    current_price = (
+        _to_float(pimcore.get("price"))
+        or _to_float(hit.get("active_price"))
+        or _to_float(nok.get("default"))
     )
-    title = (title or "").strip()
-    if not title:
-        return None
+    # Original/before price: the regular (pre-discount) price.
+    original_price = (
+        _to_float(pimcore.get("regularPrice")) or _to_float(nok.get("default"))
+    )
 
-    # Filter strictly to 4K Ultra HD releases.
-    if not _looks_like_4k(card, title):
-        return None
-
-    price_el = _select_first(card, SELECTORS["price"])
-    current_price = _parse_price(price_el.get_text() if price_el else None)
-
-    old_el = _select_first(card, SELECTORS["old_price"])
-    original_price = _parse_price(old_el.get_text() if old_el else None)
-
-    # Campaign tags — collect all matching badges, de-duplicated.
+    # Campaign tags — combine the human-readable campaign name + label, deduped.
     tags: list[str] = []
-    for selector in SELECTORS["campaign"]:
-        for badge in card.select(selector):
-            text = badge.get_text(" ", strip=True)
-            if text and text not in tags:
-                tags.append(text)
+    for key in ("campaignName", "campaignLabel"):
+        val = (pimcore.get(key) or "").strip()
+        if val and val not in tags:
+            tags.append(val)
 
-    stock_el = _select_first(card, SELECTORS["stock"])
-    stock_status = stock_el.get_text(" ", strip=True) if stock_el else None
-
-    img_el = _select_first(card, SELECTORS["image"])
-    image_url = None
-    if img_el is not None:
-        raw_img = (
-            img_el.get("src")
-            or img_el.get("data-src")
-            or img_el.get("data-original")
-        )
-        if raw_img:
-            image_url = urljoin(settings.SITE_ROOT, raw_img)
-
-    # Determine sale state + discount percentage.
-    on_sale = False
+    on_offer = bool(pimcore.get("OnOffer"))
     discount_pct = 0.0
     if original_price and current_price and original_price > current_price > 0:
-        on_sale = True
         discount_pct = round((original_price - current_price) / original_price * 100, 1)
-    if tags:
-        on_sale = True  # an active campaign counts as "on sale" for the UI
+    on_sale = on_offer or discount_pct > 0 or bool(tags)
+
+    product_id = str(hit.get("objectID") or hit.get("sku") or hit.get("product_id") or url)
 
     return {
-        "product_id": _slug_from_url(url),
-        "title": title,
+        "product_id": product_id,
+        "title": name,
         "url": url,
-        "image_url": image_url,
+        "image_url": hit.get("image_url") or hit.get("thumbnail_url"),
         "current_price": current_price,
         "original_price": original_price,
         "discount_pct": discount_pct,
         "on_sale": on_sale,
         "campaign_tags": tags,
-        "stock_status": stock_status,
+        "stock_status": hit.get("stock_status") or hit.get("custom_stock_status_plp"),
     }
-
-
-def _find_next_page(soup: BeautifulSoup, current_url: str) -> str | None:
-    """Locate the pagination 'next' link, returning an absolute URL or None."""
-    next_el = _select_first(soup, SELECTORS["next_page"])
-    if next_el and next_el.get("href"):
-        return urljoin(current_url, next_el["href"])
-    return None
-
-
-def parse_listing(html: str, page_url: str) -> tuple[list[dict[str, Any]], str | None]:
-    """Parse a category page; return (items, next_page_url)."""
-    soup = BeautifulSoup(html, "html.parser")
-
-    cards: list[Tag] = []
-    for selector in SELECTORS["product_card"]:
-        cards = soup.select(selector)
-        if cards:
-            break
-
-    items: list[dict[str, Any]] = []
-    for card in cards:
-        try:
-            item = _extract_card(card)
-            if item:
-                items.append(item)
-        except Exception as exc:  # never let one bad card kill the run
-            logger.debug("Failed to parse a card: %s", exc)
-
-    next_url = _find_next_page(soup, page_url)
-    return items, next_url
 
 
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
 def run_scrape() -> dict[str, Any]:
-    """
-    Execute one full scrape: crawl pagination, upsert everything, and fire
-    notifications for any favourited items that improved. Returns a summary.
-    """
-    logger.info("Starting scrape at %s", settings.SCRAPER_BASE_URL)
+    """Pull all 4K items from Algolia, upsert them, and fire notifications."""
+    logger.info(
+        "Starting scrape via Algolia index '%s' (filter: %s)",
+        settings.ALGOLIA_INDEX, settings.ALGOLIA_4K_FILTER,
+    )
     start = time.time()
 
-    all_items: list[dict[str, Any]] = []
-    seen_urls: set[str] = set()
-    url: str | None = settings.SCRAPER_BASE_URL
+    items: dict[str, dict[str, Any]] = {}
     page = 0
+    pages_fetched = 0
 
-    with httpx.Client(
-        headers=_default_headers(), follow_redirects=True
-    ) as client:
-        while url and page < settings.SCRAPE_MAX_PAGES:
-            if url in seen_urls:  # guard against pagination loops
+    with httpx.Client(follow_redirects=True) as client:
+        while page < settings.SCRAPE_MAX_PAGES:
+            data = _fetch_page(client, page)
+            if data is None:
                 break
-            seen_urls.add(url)
+
+            hits = data.get("hits", [])
+            for hit in hits:
+                try:
+                    item = _parse_hit(hit)
+                    if item:
+                        items[item["product_id"]] = item
+                except Exception as exc:  # never let one bad hit kill the run
+                    logger.debug("Failed to parse hit: %s", exc)
+
+            nb_pages = data.get("nbPages", 0)
+            logger.info(
+                "Page %s/%s: %s hits (collected %s)",
+                page + 1, nb_pages, len(hits), len(items),
+            )
+            pages_fetched += 1
+
             page += 1
-
-            html = _fetch(client, url)
-            if html is None:
+            if page >= nb_pages or not hits:
                 break
+            if len(items) >= settings.SCRAPE_MAX_ITEMS:
+                logger.info("Reached item cap (%s); stopping.", settings.SCRAPE_MAX_ITEMS)
+                break
+            time.sleep(settings.SCRAPE_DELAY_SECONDS)
 
-            items, next_url = parse_listing(html, url)
-            logger.info("Page %s: found %s 4K item(s)", page, len(items))
-            all_items.extend(items)
-
-            url = next_url
-            if url:
-                time.sleep(settings.SCRAPE_DELAY_SECONDS)
-
-    # De-duplicate by product_id (an item can appear on overlapping pages).
-    unique: dict[str, dict[str, Any]] = {}
-    for item in all_items:
-        unique[item["product_id"]] = item
-
-    summary = _persist(list(unique.values()))
+    summary = _persist(list(items.values()))
     summary["duration_seconds"] = round(time.time() - start, 1)
-    summary["pages"] = page
+    summary["pages"] = pages_fetched
     logger.info(
         "Scrape finished: %s products, %s new, %s notified in %.1fs",
         summary["total"], summary["new"], summary["notified"],
@@ -328,8 +219,6 @@ def run_scrape() -> dict[str, Any]:
 
 def _persist(items: list[dict[str, Any]]) -> dict[str, Any]:
     """Upsert all items in one transaction and dispatch notifications."""
-    from .database import get_favorite_ids
-
     favorites = get_favorite_ids()
     new_count = 0
     notified = 0
