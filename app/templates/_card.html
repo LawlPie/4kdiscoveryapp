@@ -1,0 +1,69 @@
+{#
+  Reusable product card macro.
+  Renders a single 4K release with image, price, discount badge, campaign
+  tags, stock status, and an interactive heart toggle.
+#}
+{% macro product_card(p) %}
+<article id="card-{{ p.product_id }}"
+         class="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-800
+                bg-slate-900 shadow-sm transition hover:border-slate-700 hover:shadow-lg">
+
+    <!-- Discount badge -->
+    {% if p.discount_pct and p.discount_pct > 0 %}
+    <span class="absolute left-3 top-3 z-10 rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-bold text-emerald-950">
+        −{{ p.discount_pct|round(0)|int }}%
+    </span>
+    {% endif %}
+
+    <!-- Heart toggle (async, no page reload) -->
+    <button type="button"
+            onclick="toggleFavorite('{{ p.product_id }}', this)"
+            aria-label="Toggle favourite"
+            data-favorited="{{ 'true' if p.is_favorited else 'false' }}"
+            class="heart-btn absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-full
+                   bg-slate-950/70 text-lg backdrop-blur transition hover:scale-110">
+        <span class="heart-icon">{{ '❤️' if p.is_favorited else '🤍' }}</span>
+    </button>
+
+    <!-- Cover image -->
+    <a href="{{ p.url }}" target="_blank" rel="noopener"
+       class="block aspect-[2/3] overflow-hidden bg-slate-800">
+        {% if p.image_url %}
+        <img src="{{ p.image_url }}" alt="{{ p.title }}" loading="lazy"
+             class="h-full w-full object-cover transition duration-300 group-hover:scale-105" />
+        {% else %}
+        <div class="flex h-full w-full items-center justify-center text-4xl text-slate-600">📀</div>
+        {% endif %}
+    </a>
+
+    <!-- Body -->
+    <div class="flex flex-1 flex-col gap-2 p-3">
+        <a href="{{ p.url }}" target="_blank" rel="noopener"
+           class="line-clamp-2 text-sm font-semibold leading-snug text-slate-100 hover:text-brand">
+            {{ p.title }}
+        </a>
+
+        <!-- Prices -->
+        <div class="mt-auto flex items-baseline gap-2">
+            <span class="text-lg font-bold text-emerald-400">{{ p.current_price|nok }}</span>
+            {% if p.original_price and p.original_price > (p.current_price or 0) %}
+            <span class="text-sm text-slate-500 line-through">{{ p.original_price|nok }}</span>
+            {% endif %}
+        </div>
+
+        <!-- Campaign tags -->
+        {% if p.campaign_tags %}
+        <div class="flex flex-wrap gap-1">
+            {% for tag in p.campaign_tags %}
+            <span class="rounded-full bg-brand/15 px-2 py-0.5 text-[11px] font-medium text-brand">{{ tag }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Stock -->
+        {% if p.stock_status %}
+        <span class="text-[11px] text-slate-500">📦 {{ p.stock_status }}</span>
+        {% endif %}
+    </div>
+</article>
+{% endmacro %}

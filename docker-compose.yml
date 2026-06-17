@@ -1,0 +1,38 @@
+# docker-compose for the 4K Discovery app.
+# One service = the whole stack (web + scraper worker + SQLite).
+#
+#   docker compose up -d --build
+#
+# Configuration is via the `environment` block below or an adjacent `.env` file.
+
+services:
+  fourk-discovery:
+    build: .
+    image: fourk-discovery:latest
+    container_name: fourk-discovery
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist the SQLite database on the host so it survives rebuilds.
+      - ./data:/app/data
+    environment:
+      # ----- Scraper -----
+      SCRAPER_BASE_URL: "https://www.platekompaniet.no/filmer-serier/4k-ultra-hd"
+      SITE_ROOT: "https://www.platekompaniet.no"
+      SCRAPE_INTERVAL_HOURS: "24"
+      SCRAPE_ON_STARTUP: "true"
+      SCRAPE_DELAY_SECONDS: "1.5"
+      SCRAPE_MAX_PAGES: "40"
+
+      # ----- Notifications (fill ONE provider to enable) -----
+      DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL:-}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      NOTIFY_MIN_DROP_PCT: "0.0"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
