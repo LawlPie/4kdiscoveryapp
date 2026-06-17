@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}4K Discovery{% endblock %}</title>
+
+    <!-- Tailwind via CDN keeps the frontend build-free and self-contained. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { DEFAULT: '#5865F2', dark: '#404EED' },
+                    },
+                },
+            },
+        };
+    </script>
+    <link rel="stylesheet" href="/static/app.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+</head>
+<body class="h-full bg-slate-950 text-slate-100 antialiased">
+
+    <!-- ===== Top navigation ===== -->
+    <header class="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+        <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+            <a href="/" class="flex items-center gap-2 text-lg font-bold tracking-tight">
+                <span class="text-2xl">📀</span>
+                <span>4K<span class="text-brand">Discovery</span></span>
+            </a>
+
+            <nav class="flex items-center gap-1 text-sm font-medium">
+                <a href="/"
+                   class="rounded-lg px-3 py-2 transition hover:bg-slate-800
+                          {{ 'bg-slate-800 text-white' if active_view == 'dashboard' else 'text-slate-300' }}">
+                    🌊 Trawler
+                </a>
+                <a href="/watchlist"
+                   class="rounded-lg px-3 py-2 transition hover:bg-slate-800
+                          {{ 'bg-slate-800 text-white' if active_view == 'watchlist' else 'text-slate-300' }}">
+                    ❤️ Watchlist
+                    {% if stats and stats.favorites %}
+                    <span class="ml-1 rounded-full bg-rose-500/20 px-1.5 text-xs text-rose-300">{{ stats.favorites }}</span>
+                    {% endif %}
+                </a>
+                <button onclick="triggerScrape(this)"
+                        class="ml-2 rounded-lg bg-brand px-3 py-2 font-semibold text-white
+                               transition hover:bg-brand-dark disabled:opacity-50">
+                    ⟳ Refresh
+                </button>
+            </nav>
+        </div>
+
+        <!-- Stats strip -->
+        {% if stats %}
+        <div class="border-t border-slate-800/60 bg-slate-900/40">
+            <div class="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-1 px-4 py-1.5 text-xs text-slate-400 sm:px-6">
+                <span><strong class="text-slate-200">{{ stats.total }}</strong> tracked</span>
+                <span><strong class="text-emerald-400">{{ stats.on_sale }}</strong> on sale</span>
+                <span><strong class="text-rose-400">{{ stats.favorites }}</strong> favourited</span>
+                {% if stats.last_updated %}
+                <span class="ml-auto">Last update: {{ stats.last_updated.replace('T', ' ') }} UTC</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </header>
+
+    <!-- Toast container for async feedback -->
+    <div id="toast" class="pointer-events-none fixed bottom-5 right-5 z-50 hidden rounded-lg
+                           bg-slate-800 px-4 py-2 text-sm shadow-lg ring-1 ring-slate-700"></div>
+
+    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="mx-auto max-w-7xl px-4 py-8 text-center text-xs text-slate-600 sm:px-6">
+        4K Discovery · unofficial Platekompaniet deal tracker · self-hosted
+    </footer>
+
+    <script src="/static/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

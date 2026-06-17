@@ -1,0 +1,69 @@
+# =============================================================================
+# 4K Discovery — Portainer Stack
+# =============================================================================
+# Deploy in Portainer:  Stacks → Add stack → name it "fourk-discovery".
+#
+# Choose ONE deployment method below, then paste this file (Web editor) or point
+# Portainer at your Git repo. Set values under "Environment variables" in the
+# Portainer UI to override the ${...} defaults (especially the webhook secrets).
+#
+#  A) Git repository  (recommended — you have the source, no registry needed)
+#       - Build method: "Repository"
+#       - Repository URL: <your repo>, Compose path: portainer-stack.yml
+#       - Keep the `build:` line active below; comment out the `image:` line.
+#
+#  B) Pre-built image  (if you pushed to Docker Hub / GHCR / a private registry)
+#       - Build the image once:  docker build -t <registry>/fourk-discovery:latest .
+#       - Push it, then comment out `build:` and set `image:` to your tag.
+# =============================================================================
+
+services:
+  fourk-discovery:
+    container_name: fourk-discovery
+
+    # --- Method A: build from the cloned Git repo (Portainer Repository deploy)
+    build: .
+    # --- Method B: pull a pre-built image instead (comment out `build:` above)
+    # image: ${IMAGE:-ghcr.io/youruser/fourk-discovery:latest}
+
+    restart: unless-stopped
+
+    ports:
+      # host:container — change the host side if 8000 is taken on your NAS/server.
+      - "${HOST_PORT:-8000}:8000"
+
+    volumes:
+      # Named volume — portable across hosts and managed by Portainer's Volumes UI.
+      - fourk_data:/app/data
+
+    environment:
+      # ----- Scraper -----
+      SCRAPER_BASE_URL: "${SCRAPER_BASE_URL:-https://www.platekompaniet.no/filmer-serier/4k-ultra-hd}"
+      SITE_ROOT: "${SITE_ROOT:-https://www.platekompaniet.no}"
+      SCRAPE_INTERVAL_HOURS: "${SCRAPE_INTERVAL_HOURS:-24}"
+      SCRAPE_ON_STARTUP: "${SCRAPE_ON_STARTUP:-true}"
+      SCRAPE_DELAY_SECONDS: "${SCRAPE_DELAY_SECONDS:-1.5}"
+      SCRAPE_MAX_PAGES: "${SCRAPE_MAX_PAGES:-40}"
+      TZ: "${TZ:-Europe/Oslo}"
+
+      # ----- Notifications (set these in the Portainer env-vars panel) -----
+      DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL:-}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      NOTIFY_MIN_DROP_PCT: "${NOTIFY_MIN_DROP_PCT:-0.0}"
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    labels:
+      # Cosmetic grouping inside the Portainer UI.
+      io.portainer.accesscontrol.public: "false"
+
+# Named volume holding the SQLite database (survives stack updates & redeploys).
+volumes:
+  fourk_data:
+    driver: local

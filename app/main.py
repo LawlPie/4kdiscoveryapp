@@ -1,0 +1,185 @@
+"""
+FastAPI application entry point.
+
+Serves the HTML UI (Jinja2 + Tailwind) and a small JSON/HTMX API. The scraper
+runs in-process via APScheduler, so a single container provides the full stack:
+web server, background worker, and the SQLite database file.
+"""
+
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from typing import Optional
+
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from .config import settings
+from . import database as db
+from .notifications import send_test_notification
+from .scheduler import (
+    get_last_result,
+    shutdown_scheduler,
+    start_scheduler,
+    trigger_scrape_async,
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger("app")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialise the DB + scheduler on startup, tear down on shutdown."""
+    db.init_db()
+    start_scheduler()
+    yield
+    shutdown_scheduler()
+
+
+app = FastAPI(title="4K Discovery", version="1.0.0", lifespan=lifespan)
+
+BASE_DIR = settings.BASE_DIR
+templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
+app.mount(
+    "/static",
+    StaticFiles(directory=str(BASE_DIR / "app" / "static")),
+    name="static",
+)
+
+
+# Make a few helpers available to all templates.
+def _format_nok(value):
+    if value is None:
+        return "—"
+    return f"{value:,.0f}".replace(",", " ") + " kr"
+
+
+templates.env.filters["nok"] = _format_nok
+
+
+# --------------------------------------------------------------------------- #
+# HTML pages
+# --------------------------------------------------------------------------- #
+@app.get("/", response_class=HTMLResponse)
+def dashboard(
+    request: Request,
+    sort: str = "discount",
+    campaign: Optional[str] = None,
+    on_sale: int = 1,
+):
+    """The Trawler view — all 4K deals with filtering/sorting."""
+    products = db.list_products(
+        only_on_sale=bool(on_sale),
+        campaign=campaign or None,
+        sort=sort,
+    )
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "products": products,
+            "campaigns": db.list_campaign_tags(),
+            "stats": db.get_stats(),
+            "sort": sort,
+            "campaign": campaign or "",
+            "on_sale": on_sale,
+            "active_view": "dashboard",
+            "last_scrape": get_last_result(),
+        },
+    )
+
+
+@app.get("/watchlist", response_class=HTMLResponse)
+def watchlist(request: Request, sort: str = "discount"):
+    """The Hearts view — only favourited items."""
+    products = db.list_products(only_favorites=True, sort=sort)
+    return templates.TemplateResponse(
+        "watchlist.html",
+        {
+            "request": request,
+            "products": products,
+            "stats": db.get_stats(),
+            "sort": sort,
+            "active_view": "watchlist",
+        },
+    )
+
+
+# --------------------------------------------------------------------------- #
+# JSON / HTMX API
+# --------------------------------------------------------------------------- #
+@app.post("/api/favorite/{product_id}")
+def api_toggle_favorite(product_id: str):
+    """Toggle a product's favourite flag (called from the heart button)."""
+    product = db.get_product(product_id)
+    if product is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    new_state = db.toggle_favorite(product_id)
+    return {"product_id": product_id, "is_favorited": new_state}
+
+
+@app.get("/api/products")
+def api_products(
+    sort: str = "discount",
+    campaign: Optional[str] = None,
+    on_sale: int = 0,
+    favorites: int = 0,
+):
+    """JSON list endpoint, useful for debugging or external integrations."""
+    return db.list_products(
+        only_on_sale=bool(on_sale),
+        only_favorites=bool(favorites),
+        campaign=campaign or None,
+        sort=sort,
+    )
+
+
+@app.get("/api/products/{product_id}/history")
+def api_history(product_id: str):
+    """Price history for a single product (drives the sparkline)."""
+    return {
+        "product_id": product_id,
+        "history": db.get_price_history(product_id),
+    }
+
+
+@app.post("/api/scrape")
+def api_scrape():
+    """Manually trigger a scrape in the background."""
+    started = trigger_scrape_async()
+    return {"started": started, "message": "Scrape started" if started else "Already running"}
+
+
+@app.post("/api/test-notification")
+def api_test_notification():
+    """Send a test notification to verify webhook configuration."""
+    if not settings.notifications_enabled:
+        return JSONResponse(
+            {"sent": False, "message": "No webhook configured"}, status_code=400
+        )
+    sent = send_test_notification()
+    return {"sent": sent}
+
+
+@app.get("/api/stats")
+def api_stats():
+    return db.get_stats()
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+# Convenience: allow toggling favourites via a non-JS form fallback too.
+@app.post("/favorite")
+def form_toggle_favorite(product_id: str = Form(...), next: str = Form("/")):
+    db.toggle_favorite(product_id)
+    return RedirectResponse(url=next, status_code=303)
