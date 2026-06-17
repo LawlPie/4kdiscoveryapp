@@ -20,6 +20,7 @@ services:
       # ----- Scraper (queries Platekompaniet's Algolia backend) -----
       SCRAPE_INTERVAL_HOURS: "24"
       SCRAPE_ON_STARTUP: "true"
+      SCRAPE_FULL_CATALOGUE: "true"
       SCRAPE_MAX_ITEMS: "1000"
       SCRAPE_ONLY_ON_OFFER: "false"
       SCRAPE_DELAY_SECONDS: "1.5"

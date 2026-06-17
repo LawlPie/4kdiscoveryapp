@@ -112,7 +112,8 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 |---|---|---|
 | `SCRAPE_INTERVAL_HOURS` | `24` | How often the scraper runs |
 | `SCRAPE_ON_STARTUP` | `true` | Run once immediately on boot |
-| `SCRAPE_MAX_ITEMS` | `1000` | Max 4K items to fetch per run (Algolia caps paging at 1000) |
+| `SCRAPE_FULL_CATALOGUE` | `true` | Fetch **all** ~6500 4K titles (bisects the id space to beat Algolia's 1000-cap). Set `false` for the faster top-popular subset |
+| `SCRAPE_MAX_ITEMS` | `1000` | Cap for the top-popular mode only (ignored in full mode) |
 | `SCRAPE_ONLY_ON_OFFER` | `false` | Store only items currently on offer/campaign |
 | `SCRAPE_DELAY_SECONDS` | `1.5` | Politeness delay between API pages |
 | `ALGOLIA_APP_ID` / `ALGOLIA_API_KEY` | (site defaults) | Platekompaniet's public search backend |
@@ -162,6 +163,13 @@ public, search-only Algolia index the site's own frontend uses
 ([`app/scraper.py`](app/scraper.py)), filtered to `format_media:4K Ultra HD`.
 This returns clean structured JSON (title, price, regular price, campaign name,
 stock) — far more reliable than parsing markup.
+
+**Full-catalogue coverage.** Algolia caps any single query at 1000 results, but
+the 4K catalogue is ~6500 titles. In full mode (`SCRAPE_FULL_CATALOGUE=true`,
+the default) the worker recursively **bisects the numeric `product_id` range**:
+any sub-range with ≤1000 hits is fetched whole, larger ranges split in half, and
+empty ranges prune instantly. This pulls the entire catalogue in ~30 small
+queries (measured: all 6542 items in ~6s) — category-independent and complete.
 
 If a run returns 0 items, Platekompaniet has likely rotated its Algolia
 credentials or renamed the index/facet. Re-extract them from the site's JS

@@ -75,6 +75,18 @@ class Settings:
     # If true, only store items currently on offer/campaign (smaller DB).
     SCRAPE_ONLY_ON_OFFER: bool = _get_bool("SCRAPE_ONLY_ON_OFFER", False)
 
+    # Full-catalogue mode: recursively bisect the product_id space so we can fetch
+    # ALL ~6500 4K items, working around Algolia's 1000-results-per-query cap.
+    # When False, falls back to the (faster) top-SCRAPE_MAX_ITEMS popular subset.
+    SCRAPE_FULL_CATALOGUE: bool = _get_bool("SCRAPE_FULL_CATALOGUE", True)
+    # The unique numeric attribute used to partition the result space.
+    SCRAPE_PARTITION_ATTR: str = os.getenv("SCRAPE_PARTITION_ATTR", "product_id")
+    # Initial bounds of that attribute (generous; empty sub-ranges prune instantly).
+    SCRAPE_ID_MIN: int = _get_int("SCRAPE_ID_MIN", 0)
+    SCRAPE_ID_MAX: int = _get_int("SCRAPE_ID_MAX", 100_000_000)
+    # Safety budget on total Algolia requests per full crawl.
+    SCRAPE_MAX_QUERIES: int = _get_int("SCRAPE_MAX_QUERIES", 500)
+
     # How often the background scraper runs, in hours.
     SCRAPE_INTERVAL_HOURS: float = _get_float("SCRAPE_INTERVAL_HOURS", 24.0)
     # Run a scrape immediately on startup (handy for a fresh install).

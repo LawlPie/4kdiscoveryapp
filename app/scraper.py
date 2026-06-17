@@ -58,26 +58,27 @@ def _headers() -> dict[str, str]:
     }
 
 
-def _build_params(page: int) -> str:
-    """Build the URL-encoded Algolia `params` string for one page of results."""
-    facet_filters: list[list[str]] = [[settings.ALGOLIA_4K_FILTER]]
+def _facet_filters() -> list[list[str]]:
+    """The base facet filters applied to every query (4K, optionally on-offer)."""
+    filters: list[list[str]] = [[settings.ALGOLIA_4K_FILTER]]
     if settings.SCRAPE_ONLY_ON_OFFER:
-        facet_filters.append(["pimcore.OnOffer:true"])
+        filters.append(["pimcore.OnOffer:true"])
+    return filters
 
-    return urlencode(
+
+def _search(client: httpx.Client, params: dict[str, Any]) -> dict[str, Any] | None:
+    """POST one Algolia query with retries + backoff. Returns parsed JSON or None.
+
+    `params` is a plain dict; we JSON-encode list/dict values and URL-encode the
+    whole thing into Algolia's expected `{"params": "<query-string>"}` body.
+    """
+    encoded = urlencode(
         {
-            "query": "",
-            "hitsPerPage": settings.SCRAPE_HITS_PER_PAGE,
-            "page": page,
-            "facetFilters": json.dumps(facet_filters, ensure_ascii=False),
-            "attributesToRetrieve": json.dumps(_ATTRIBUTES),
+            k: (json.dumps(v, ensure_ascii=False) if isinstance(v, (list, dict)) else v)
+            for k, v in params.items()
         }
     )
-
-
-def _fetch_page(client: httpx.Client, page: int) -> dict[str, Any] | None:
-    """POST one search page with retries + backoff. Returns parsed JSON or None."""
-    body = {"params": _build_params(page)}
+    body = {"params": encoded}
     for attempt in range(1, settings.SCRAPE_RETRIES + 1):
         try:
             resp = client.post(
@@ -91,11 +92,11 @@ def _fetch_page(client: httpx.Client, page: int) -> dict[str, Any] | None:
         except httpx.HTTPError as exc:
             wait = settings.SCRAPE_DELAY_SECONDS * attempt
             logger.warning(
-                "Algolia page %s failed (%s/%s): %s — retrying in %.1fs",
-                page, attempt, settings.SCRAPE_RETRIES, exc, wait,
+                "Algolia query failed (%s/%s): %s — retrying in %.1fs",
+                attempt, settings.SCRAPE_RETRIES, exc, wait,
             )
             time.sleep(wait)
-    logger.error("Giving up on page %s after %s attempts", page, settings.SCRAPE_RETRIES)
+    logger.error("Giving up on query after %s attempts", settings.SCRAPE_RETRIES)
     return None
 
 
@@ -164,55 +165,115 @@ def _parse_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
+def _collect_hits(hits: list[dict[str, Any]], items: dict[str, dict[str, Any]]) -> None:
+    """Parse a batch of Algolia hits into the accumulating items dict."""
+    for hit in hits:
+        try:
+            item = _parse_hit(hit)
+            if item:
+                items[item["product_id"]] = item
+        except Exception as exc:  # never let one bad hit kill the run
+            logger.debug("Failed to parse hit: %s", exc)
+
+
+def _crawl_capped(client: httpx.Client) -> tuple[dict[str, dict[str, Any]], int]:
+    """Fetch the top SCRAPE_MAX_ITEMS popular 4K items via normal pagination."""
+    items: dict[str, dict[str, Any]] = {}
+    queries = 0
+    page = 0
+    while page < settings.SCRAPE_MAX_PAGES:
+        data = _search(client, {
+            "query": "",
+            "hitsPerPage": settings.SCRAPE_HITS_PER_PAGE,
+            "page": page,
+            "facetFilters": _facet_filters(),
+            "attributesToRetrieve": _ATTRIBUTES,
+        })
+        queries += 1
+        if data is None:
+            break
+        hits = data.get("hits", [])
+        _collect_hits(hits, items)
+        nb_pages = data.get("nbPages", 0)
+        logger.info("Page %s/%s: %s hits (collected %s)", page + 1, nb_pages, len(hits), len(items))
+        page += 1
+        if page >= nb_pages or not hits:
+            break
+        if len(items) >= settings.SCRAPE_MAX_ITEMS:
+            logger.info("Reached item cap (%s); stopping.", settings.SCRAPE_MAX_ITEMS)
+            break
+        time.sleep(settings.SCRAPE_DELAY_SECONDS)
+    return items, queries
+
+
+def _crawl_full(client: httpx.Client) -> tuple[dict[str, dict[str, Any]], int]:
+    """
+    Fetch the ENTIRE 4K catalogue by recursively bisecting the numeric
+    `product_id` space. Any sub-range with ≤1000 hits is fetched in a single
+    1000-result query; larger ranges are split in half. Empty ranges prune
+    instantly, so this converges in a few dozen queries regardless of catalogue
+    size — sidestepping Algolia's 1000-results-per-query ceiling entirely.
+    """
+    items: dict[str, dict[str, Any]] = {}
+    attr = settings.SCRAPE_PARTITION_ATTR
+    budget = [settings.SCRAPE_MAX_QUERIES]
+    HITS_MAX = 1000  # Algolia's hard per-query result cap
+
+    def visit(lo: int, hi: int) -> None:
+        if lo > hi or budget[0] <= 0:
+            if budget[0] <= 0:
+                logger.warning("Query budget exhausted; catalogue may be partial.")
+            return
+        budget[0] -= 1
+        data = _search(client, {
+            "query": "",
+            "hitsPerPage": HITS_MAX,
+            "facetFilters": _facet_filters(),
+            "numericFilters": [f"{attr}>={lo}", f"{attr}<={hi}"],
+            "attributesToRetrieve": _ATTRIBUTES,
+        })
+        if data is None:
+            return
+        n = data.get("nbHits", 0)
+        if n == 0:
+            return
+        # Small enough to fetch whole, or we can't split further → take it.
+        if n <= HITS_MAX or lo >= hi:
+            _collect_hits(data.get("hits", []), items)
+            logger.info("range [%d, %d]: %d hits (collected %d)", lo, hi, n, len(items))
+            time.sleep(settings.SCRAPE_DELAY_SECONDS)
+            return
+        mid = (lo + hi) // 2
+        visit(lo, mid)
+        visit(mid + 1, hi)
+
+    visit(settings.SCRAPE_ID_MIN, settings.SCRAPE_ID_MAX)
+    return items, settings.SCRAPE_MAX_QUERIES - budget[0]
+
+
 def run_scrape() -> dict[str, Any]:
-    """Pull all 4K items from Algolia, upsert them, and fire notifications."""
+    """Pull 4K items from Algolia, upsert them, and fire notifications."""
+    mode = "full catalogue" if settings.SCRAPE_FULL_CATALOGUE else "top-popular"
     logger.info(
-        "Starting scrape via Algolia index '%s' (filter: %s)",
-        settings.ALGOLIA_INDEX, settings.ALGOLIA_4K_FILTER,
+        "Starting scrape via Algolia index '%s' (filter: %s, mode: %s)",
+        settings.ALGOLIA_INDEX, settings.ALGOLIA_4K_FILTER, mode,
     )
     start = time.time()
 
-    items: dict[str, dict[str, Any]] = {}
-    page = 0
-    pages_fetched = 0
-
     with httpx.Client(follow_redirects=True) as client:
-        while page < settings.SCRAPE_MAX_PAGES:
-            data = _fetch_page(client, page)
-            if data is None:
-                break
-
-            hits = data.get("hits", [])
-            for hit in hits:
-                try:
-                    item = _parse_hit(hit)
-                    if item:
-                        items[item["product_id"]] = item
-                except Exception as exc:  # never let one bad hit kill the run
-                    logger.debug("Failed to parse hit: %s", exc)
-
-            nb_pages = data.get("nbPages", 0)
-            logger.info(
-                "Page %s/%s: %s hits (collected %s)",
-                page + 1, nb_pages, len(hits), len(items),
-            )
-            pages_fetched += 1
-
-            page += 1
-            if page >= nb_pages or not hits:
-                break
-            if len(items) >= settings.SCRAPE_MAX_ITEMS:
-                logger.info("Reached item cap (%s); stopping.", settings.SCRAPE_MAX_ITEMS)
-                break
-            time.sleep(settings.SCRAPE_DELAY_SECONDS)
+        if settings.SCRAPE_FULL_CATALOGUE:
+            items, queries = _crawl_full(client)
+        else:
+            items, queries = _crawl_capped(client)
 
     summary = _persist(list(items.values()))
     summary["duration_seconds"] = round(time.time() - start, 1)
-    summary["pages"] = pages_fetched
+    summary["queries"] = queries
     logger.info(
-        "Scrape finished: %s products, %s new, %s notified in %.1fs",
-        summary["total"], summary["new"], summary["notified"],
-        summary["duration_seconds"],
+        "Scrape finished: %s products, %s new, %s skipped(owned), %s notified "
+        "in %.1fs (%s queries)",
+        summary["total"], summary["new"], summary["skipped_owned"],
+        summary["notified"], summary["duration_seconds"], queries,
     )
     return summary
 
