@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 import httpx
 
 from .config import settings
-from .database import db_session, get_favorite_ids, upsert_product
+from .database import db_session, get_favorite_ids, get_owned_ids, upsert_product
 from .notifications import notify_price_change
 
 logger = logging.getLogger("scraper")
@@ -220,12 +220,18 @@ def run_scrape() -> dict[str, Any]:
 def _persist(items: list[dict[str, Any]]) -> dict[str, Any]:
     """Upsert all items in one transaction and dispatch notifications."""
     favorites = get_favorite_ids()
+    owned = get_owned_ids()
     new_count = 0
+    skipped = 0
     notified = 0
     changes: list[dict[str, Any]] = []
 
     with db_session() as conn:
         for item in items:
+            # Items the user already owns are not tracked/updated.
+            if item["product_id"] in owned:
+                skipped += 1
+                continue
             result = upsert_product(conn, item)
             if result["is_new"]:
                 new_count += 1
@@ -243,7 +249,12 @@ def _persist(items: list[dict[str, Any]]) -> dict[str, Any]:
         except Exception as exc:
             logger.warning("Notification failed: %s", exc)
 
-    return {"total": len(items), "new": new_count, "notified": notified}
+    return {
+        "total": len(items),
+        "new": new_count,
+        "skipped_owned": skipped,
+        "notified": notified,
+    }
 
 
 def _is_improvement(change: dict[str, Any]) -> bool:

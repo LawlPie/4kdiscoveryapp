@@ -18,6 +18,9 @@ with Docker.
   price, title, recency) and filtering by campaign tag.
 - **❤️ Watchlist** — favourite any title; the heart toggles instantly via an
   async API call (no page reload).
+- **✓ Collection** — mark titles you already own; they're hidden from the
+  Trawler/Watchlist and skipped by the scraper (favourite & owned are mutually
+  exclusive).
 - **📈 Price history** — every price change is logged to `price_history`.
 - **🔔 Notifications** — rich Discord embeds or Telegram messages when a
   favourited item gets cheaper or a new campaign starts.
@@ -129,7 +132,9 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | `GET`  | `/` | Trawler view (HTML) |
 | `GET`  | `/watchlist` | Watchlist view (HTML) |
 | `POST` | `/api/favorite/{product_id}` | Toggle favourite → `{is_favorited}` |
-| `GET`  | `/api/products` | JSON list (`sort`, `campaign`, `on_sale`, `favorites`) |
+| `POST` | `/api/owned/{product_id}` | Toggle owned/collection → `{is_owned}` |
+| `GET`  | `/owned` | Collection view (HTML) |
+| `GET`  | `/api/products` | JSON list (`sort`, `campaign`, `on_sale`, `favorites`, `owned`, `exclude_owned`) |
 | `GET`  | `/api/products/{id}/history` | Price history |
 | `POST` | `/api/scrape` | Trigger a scrape now |
 | `POST` | `/api/test-notification` | Send a test alert |
@@ -143,7 +148,8 @@ All settings are environment variables (see [`.env.example`](.env.example)):
   current & original price, discount %, campaign tags, stock, timestamps).
 - **`price_history`** — append-only `(product_id, price, original_price, date)`
   snapshots for trend tracking.
-- **`watchlist`** — `(product_id, is_favorited)`.
+- **`watchlist`** — `(product_id, is_favorited, is_owned)` — per-product user
+  flags for the wishlist heart and the owned collection.
 
 ---
 

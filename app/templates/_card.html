@@ -15,15 +15,29 @@
     </span>
     {% endif %}
 
-    <!-- Heart toggle (async, no page reload) -->
-    <button type="button"
-            onclick="toggleFavorite('{{ p.product_id }}', this)"
-            aria-label="Toggle favourite"
-            data-favorited="{{ 'true' if p.is_favorited else 'false' }}"
-            class="heart-btn absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-full
-                   bg-slate-950/70 text-lg backdrop-blur transition hover:scale-110">
-        <span class="heart-icon">{{ '❤️' if p.is_favorited else '🤍' }}</span>
-    </button>
+    <!-- Action buttons (async, no page reload) -->
+    <div class="absolute right-3 top-3 z-10 flex gap-1.5">
+        <!-- Own it / already in collection -->
+        <button type="button"
+                onclick="toggleOwned('{{ p.product_id }}', this)"
+                aria-label="Mark as owned"
+                title="{{ 'In your collection — click to remove' if p.is_owned else 'Mark as owned' }}"
+                data-owned="{{ 'true' if p.is_owned else 'false' }}"
+                class="owned-btn grid h-9 w-9 place-items-center rounded-full text-base
+                       backdrop-blur transition hover:scale-110
+                       {{ 'bg-emerald-500 text-emerald-950' if p.is_owned else 'bg-slate-950/70 text-slate-300' }}">
+            <span class="owned-icon">✓</span>
+        </button>
+        <!-- Wishlist heart -->
+        <button type="button"
+                onclick="toggleFavorite('{{ p.product_id }}', this)"
+                aria-label="Toggle favourite"
+                data-favorited="{{ 'true' if p.is_favorited else 'false' }}"
+                class="heart-btn grid h-9 w-9 place-items-center rounded-full
+                       bg-slate-950/70 text-lg backdrop-blur transition hover:scale-110">
+            <span class="heart-icon">{{ '❤️' if p.is_favorited else '🤍' }}</span>
+        </button>
+    </div>
 
     <!-- Cover image -->
     <a href="{{ p.url }}" target="_blank" rel="noopener"

@@ -46,6 +46,14 @@
                     <span class="ml-1 rounded-full bg-rose-500/20 px-1.5 text-xs text-rose-300">{{ stats.favorites }}</span>
                     {% endif %}
                 </a>
+                <a href="/owned"
+                   class="rounded-lg px-3 py-2 transition hover:bg-slate-800
+                          {{ 'bg-slate-800 text-white' if active_view == 'owned' else 'text-slate-300' }}">
+                    ✓ Collection
+                    {% if stats and stats.owned %}
+                    <span class="ml-1 rounded-full bg-emerald-500/20 px-1.5 text-xs text-emerald-300">{{ stats.owned }}</span>
+                    {% endif %}
+                </a>
                 <button onclick="triggerScrape(this)"
                         class="ml-2 rounded-lg bg-brand px-3 py-2 font-semibold text-white
                                transition hover:bg-brand-dark disabled:opacity-50">
@@ -61,6 +69,7 @@
                 <span><strong class="text-slate-200">{{ stats.total }}</strong> tracked</span>
                 <span><strong class="text-emerald-400">{{ stats.on_sale }}</strong> on sale</span>
                 <span><strong class="text-rose-400">{{ stats.favorites }}</strong> favourited</span>
+                <span><strong class="text-emerald-300">{{ stats.owned }}</strong> owned</span>
                 {% if stats.last_updated %}
                 <span class="ml-auto">Last update: {{ stats.last_updated.replace('T', ' ') }} UTC</span>
                 {% endif %}

@@ -12,6 +12,38 @@ function showToast(message, isError = false) {
     el._timer = setTimeout(() => el.classList.add("hidden"), 2500);
 }
 
+/** Smoothly fade out and remove a product card (when it leaves the view). */
+function removeCard(productId) {
+    const card = document.getElementById(`card-${productId}`);
+    if (!card) return;
+    card.style.transition = "opacity .25s, transform .25s";
+    card.style.opacity = "0";
+    card.style.transform = "scale(.95)";
+    setTimeout(() => card.remove(), 250);
+}
+
+/** Update the heart button's icon/state within a card. */
+function syncHeart(productId, favorited) {
+    const card = document.getElementById(`card-${productId}`);
+    const btn = card && card.querySelector(".heart-btn");
+    if (!btn) return;
+    const icon = btn.querySelector(".heart-icon");
+    if (icon) icon.textContent = favorited ? "❤️" : "🤍";
+    btn.dataset.favorited = favorited ? "true" : "false";
+}
+
+/** Update the owned button's icon/colour within a card. */
+function syncOwned(productId, owned) {
+    const card = document.getElementById(`card-${productId}`);
+    const btn = card && card.querySelector(".owned-btn");
+    if (!btn) return;
+    btn.dataset.owned = owned ? "true" : "false";
+    btn.classList.toggle("bg-emerald-500", owned);
+    btn.classList.toggle("text-emerald-950", owned);
+    btn.classList.toggle("bg-slate-950/70", !owned);
+    btn.classList.toggle("text-slate-300", !owned);
+}
+
 /**
  * Toggle a product's favourite state via the JSON API and update the heart
  * icon in place — no full page reload.
@@ -26,25 +58,54 @@ async function toggleFavorite(productId, btn) {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
-        const icon = btn.querySelector(".heart-icon");
-        if (icon) icon.textContent = data.is_favorited ? "❤️" : "🤍";
-        btn.dataset.favorited = data.is_favorited ? "true" : "false";
+        syncHeart(productId, data.is_favorited);
+        // Favouriting clears 'owned' — keep the owned button in sync.
+        syncOwned(productId, data.is_owned);
 
         showToast(data.is_favorited ? "Added to watchlist ❤️" : "Removed from watchlist");
 
         // On the watchlist page, an un-favourited card should disappear.
         if (!data.is_favorited && window.location.pathname.startsWith("/watchlist")) {
-            const card = document.getElementById(`card-${productId}`);
-            if (card) {
-                card.style.transition = "opacity .25s, transform .25s";
-                card.style.opacity = "0";
-                card.style.transform = "scale(.95)";
-                setTimeout(() => card.remove(), 250);
-            }
+            removeCard(productId);
         }
     } catch (err) {
         console.error(err);
         showToast("Could not update favourite", true);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+/**
+ * Toggle a product's owned/collection state. Owned items are hidden from the
+ * Trawler and Watchlist, so the card is removed there when marked owned (and
+ * removed from the Collection view when un-marked).
+ */
+async function toggleOwned(productId, btn) {
+    btn.disabled = true;
+    try {
+        const resp = await fetch(`/api/owned/${encodeURIComponent(productId)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        syncOwned(productId, data.is_owned);
+        // Marking owned clears the favourite flag.
+        syncHeart(productId, data.is_favorited);
+
+        showToast(data.is_owned ? "Added to your collection ✓" : "Removed from collection");
+
+        const path = window.location.pathname;
+        const onCollection = path.startsWith("/owned");
+        // Disappear from deal/wishlist views when owned; from collection when not.
+        if ((data.is_owned && !onCollection) || (!data.is_owned && onCollection)) {
+            removeCard(productId);
+        }
+    } catch (err) {
+        console.error(err);
+        showToast("Could not update collection", true);
     } finally {
         btn.disabled = false;
     }

@@ -74,11 +74,12 @@ def dashboard(
     campaign: Optional[str] = None,
     on_sale: int = 1,
 ):
-    """The Trawler view — all 4K deals with filtering/sorting."""
+    """The Trawler view — all 4K deals with filtering/sorting (owned hidden)."""
     products = db.list_products(
         only_on_sale=bool(on_sale),
         campaign=campaign or None,
         sort=sort,
+        exclude_owned=True,
     )
     return templates.TemplateResponse(
         "dashboard.html",
@@ -98,8 +99,8 @@ def dashboard(
 
 @app.get("/watchlist", response_class=HTMLResponse)
 def watchlist(request: Request, sort: str = "discount"):
-    """The Hearts view — only favourited items."""
-    products = db.list_products(only_favorites=True, sort=sort)
+    """The Hearts view — only favourited items (owned hidden)."""
+    products = db.list_products(only_favorites=True, exclude_owned=True, sort=sort)
     return templates.TemplateResponse(
         "watchlist.html",
         {
@@ -108,6 +109,22 @@ def watchlist(request: Request, sort: str = "discount"):
             "stats": db.get_stats(),
             "sort": sort,
             "active_view": "watchlist",
+        },
+    )
+
+
+@app.get("/owned", response_class=HTMLResponse)
+def owned(request: Request, sort: str = "title"):
+    """The Collection view — movies the user already owns."""
+    products = db.list_products(only_owned=True, sort=sort)
+    return templates.TemplateResponse(
+        "owned.html",
+        {
+            "request": request,
+            "products": products,
+            "stats": db.get_stats(),
+            "sort": sort,
+            "active_view": "owned",
         },
     )
 
@@ -122,7 +139,23 @@ def api_toggle_favorite(product_id: str):
     if product is None:
         return JSONResponse({"error": "not found"}, status_code=404)
     new_state = db.toggle_favorite(product_id)
-    return {"product_id": product_id, "is_favorited": new_state}
+    # Favouriting clears 'owned' (mutually exclusive) — report both states.
+    return {"product_id": product_id, "is_favorited": new_state, "is_owned": False}
+
+
+@app.post("/api/owned/{product_id}")
+def api_toggle_owned(product_id: str):
+    """Toggle a product's owned/collection flag (called from the 'Own it' button)."""
+    product = db.get_product(product_id)
+    if product is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    new_state = db.toggle_owned(product_id)
+    # Marking owned clears the favourite flag (mutually exclusive).
+    return {
+        "product_id": product_id,
+        "is_owned": new_state,
+        "is_favorited": False if new_state else product["is_favorited"],
+    }
 
 
 @app.get("/api/products")
@@ -131,11 +164,15 @@ def api_products(
     campaign: Optional[str] = None,
     on_sale: int = 0,
     favorites: int = 0,
+    owned: int = 0,
+    exclude_owned: int = 0,
 ):
     """JSON list endpoint, useful for debugging or external integrations."""
     return db.list_products(
         only_on_sale=bool(on_sale),
         only_favorites=bool(favorites),
+        only_owned=bool(owned),
+        exclude_owned=bool(exclude_owned),
         campaign=campaign or None,
         sort=sort,
     )

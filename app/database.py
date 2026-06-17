@@ -86,7 +86,8 @@ CREATE TABLE IF NOT EXISTS price_history (
 
 CREATE TABLE IF NOT EXISTS watchlist (
     product_id      TEXT PRIMARY KEY,
-    is_favorited    INTEGER NOT NULL DEFAULT 1,
+    is_favorited    INTEGER NOT NULL DEFAULT 0,   -- ❤️ on the wishlist
+    is_owned        INTEGER NOT NULL DEFAULT 0,   -- ✓ already in my collection
     created_at      TEXT NOT NULL,
     FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE CASCADE
 );
@@ -97,9 +98,20 @@ CREATE INDEX IF NOT EXISTS idx_products_onsale ON products(on_sale);
 
 
 def init_db() -> None:
-    """Create tables and indexes if they do not yet exist."""
+    """Create tables and indexes if they do not yet exist, then migrate."""
     with db_session() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Idempotent, additive migrations for databases created before a feature."""
+    # Add watchlist.is_owned to pre-existing databases (the "owned" collection).
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(watchlist)")}
+    if "is_owned" not in cols:
+        conn.execute(
+            "ALTER TABLE watchlist ADD COLUMN is_owned INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -114,6 +126,7 @@ def _row_to_product(row: sqlite3.Row) -> dict[str, Any]:
     except (json.JSONDecodeError, TypeError):
         data["campaign_tags"] = []
     data["is_favorited"] = bool(data.get("is_favorited"))
+    data["is_owned"] = bool(data.get("is_owned"))
     return data
 
 
@@ -231,11 +244,13 @@ def list_products(
     *,
     only_on_sale: bool = False,
     only_favorites: bool = False,
+    only_owned: bool = False,
+    exclude_owned: bool = False,
     campaign: str | None = None,
     sort: str = "discount",
 ) -> list[dict[str, Any]]:
     """
-    Fetch products joined with their watchlist (favourite) state.
+    Fetch products joined with their watchlist (favourite/owned) state.
 
     sort: "discount" | "price_asc" | "price_desc" | "title" | "recent"
     """
@@ -246,6 +261,11 @@ def list_products(
         where.append("p.on_sale = 1")
     if only_favorites:
         where.append("COALESCE(w.is_favorited, 0) = 1")
+    if only_owned:
+        where.append("COALESCE(w.is_owned, 0) = 1")
+    if exclude_owned:
+        # Hide items already in the collection from the deal/wishlist views.
+        where.append("COALESCE(w.is_owned, 0) = 0")
     if campaign:
         # campaign_tags is JSON text; a LIKE match is good enough for filtering.
         where.append("p.campaign_tags LIKE ?")
@@ -260,7 +280,8 @@ def list_products(
     }.get(sort, "p.discount_pct DESC")
 
     sql = (
-        "SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited "
+        "SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited, "
+        "COALESCE(w.is_owned, 0) AS is_owned "
         "FROM products p "
         "LEFT JOIN watchlist w ON w.product_id = p.product_id "
     )
@@ -276,7 +297,8 @@ def list_products(
 def get_product(product_id: str) -> dict[str, Any] | None:
     with db_session() as conn:
         row = conn.execute(
-            "SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited "
+            "SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited, "
+            "COALESCE(w.is_owned, 0) AS is_owned "
             "FROM products p LEFT JOIN watchlist w ON w.product_id = p.product_id "
             "WHERE p.product_id = ?",
             (product_id,),
@@ -320,14 +342,18 @@ def get_favorite_ids() -> set[str]:
 
 
 def set_favorite(product_id: str, favorited: bool) -> bool:
-    """Toggle a product's favourite flag. Returns the new state."""
+    """
+    Toggle a product's favourite flag. Returns the new state.
+    Favouriting clears the 'owned' flag — the two states are mutually exclusive
+    (you wishlist what you don't own yet).
+    """
     now = _utcnow()
     with db_session() as conn:
         if favorited:
             conn.execute(
-                "INSERT INTO watchlist (product_id, is_favorited, created_at) "
-                "VALUES (?, 1, ?) "
-                "ON CONFLICT(product_id) DO UPDATE SET is_favorited = 1",
+                "INSERT INTO watchlist (product_id, is_favorited, is_owned, created_at) "
+                "VALUES (?, 1, 0, ?) "
+                "ON CONFLICT(product_id) DO UPDATE SET is_favorited = 1, is_owned = 0",
                 (product_id, now),
             )
         else:
@@ -344,6 +370,46 @@ def toggle_favorite(product_id: str) -> bool:
     return set_favorite(product_id, product_id not in favs)
 
 
+# --------------------------------------------------------------------------- #
+# Owned collection
+# --------------------------------------------------------------------------- #
+def get_owned_ids() -> set[str]:
+    with db_session() as conn:
+        rows = conn.execute(
+            "SELECT product_id FROM watchlist WHERE is_owned = 1"
+        ).fetchall()
+    return {r["product_id"] for r in rows}
+
+
+def set_owned(product_id: str, owned: bool) -> bool:
+    """
+    Toggle a product's owned flag. Returns the new state.
+    Marking owned clears the favourite flag (mutually exclusive). Owned items
+    are hidden from the deal/wishlist views and skipped by the scraper.
+    """
+    now = _utcnow()
+    with db_session() as conn:
+        if owned:
+            conn.execute(
+                "INSERT INTO watchlist (product_id, is_favorited, is_owned, created_at) "
+                "VALUES (?, 0, 1, ?) "
+                "ON CONFLICT(product_id) DO UPDATE SET is_owned = 1, is_favorited = 0",
+                (product_id, now),
+            )
+        else:
+            conn.execute(
+                "UPDATE watchlist SET is_owned = 0 WHERE product_id = ?",
+                (product_id,),
+            )
+    return owned
+
+
+def toggle_owned(product_id: str) -> bool:
+    """Flip the owned flag and return the resulting state."""
+    owned = get_owned_ids()
+    return set_owned(product_id, product_id not in owned)
+
+
 def get_stats() -> dict[str, Any]:
     """Small dashboard summary used in the header."""
     with db_session() as conn:
@@ -354,6 +420,9 @@ def get_stats() -> dict[str, Any]:
         favs = conn.execute(
             "SELECT COUNT(*) AS c FROM watchlist WHERE is_favorited = 1"
         ).fetchone()["c"]
+        owned = conn.execute(
+            "SELECT COUNT(*) AS c FROM watchlist WHERE is_owned = 1"
+        ).fetchone()["c"]
         last = conn.execute(
             "SELECT MAX(updated_at) AS t FROM products"
         ).fetchone()["t"]
@@ -361,5 +430,6 @@ def get_stats() -> dict[str, Any]:
         "total": total,
         "on_sale": on_sale,
         "favorites": favs,
+        "owned": owned,
         "last_updated": last,
     }
