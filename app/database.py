@@ -369,23 +369,41 @@ def list_products(
     )
 
     # Unprefixed columns so the same ORDER BY works for the plain and grouped SQL.
+    # Price sorts use `effective_price` = the lower of Platekompaniet's price and
+    # the matching iMusic offer, so "cheaper at iMusic" deals sort to the top.
     sort_clause = {
-        "discount": "discount_pct DESC, current_price ASC",
-        "price_asc": "current_price IS NULL, current_price ASC",
-        "price_desc": "current_price DESC",
+        "discount": "discount_pct DESC, effective_price ASC",
+        "price_asc": "(effective_price IS NULL), effective_price ASC",
+        "price_desc": "effective_price DESC",
         "title": "title COLLATE NOCASE ASC",
         "recent": "updated_at DESC",
     }.get(sort, "discount_pct DESC")
 
+    # Match the same disc at iMusic by EAN and take the cheaper of the two prices.
+    imusic_join = (
+        "LEFT JOIN products im ON im.retailer = 'imusic' "
+        "AND p.ean IS NOT NULL AND im.ean = p.ean "
+    )
+    effective_expr = (
+        "CASE "
+        "WHEN p.current_price IS NULL THEN im.current_price "
+        "WHEN im.current_price IS NULL THEN p.current_price "
+        "WHEN im.current_price < p.current_price THEN im.current_price "
+        "ELSE p.current_price END AS effective_price"
+    )
+
     if grouped:
-        # Rank variants within each group by price; keep the cheapest as the
-        # representative (rn = 1) and expose how many editions matched.
+        # Rank variants within each group by Platekompaniet price; keep the
+        # cheapest as the representative (rn = 1) and expose how many editions
+        # matched. Sorting then uses the representative's effective_price.
         sql = (
             "WITH base AS ("
             "  SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited, "
-            "         COALESCE(w.is_owned, 0) AS is_owned "
+            "         COALESCE(w.is_owned, 0) AS is_owned, "
+            f"        {effective_expr} "
             "  FROM products p "
             "  LEFT JOIN watchlist w ON w.product_id = p.product_id "
+            "  " + imusic_join
             + clause
             + "), ranked AS ("
             "  SELECT *, "
@@ -399,9 +417,11 @@ def list_products(
     else:
         sql = (
             "SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited, "
-            "COALESCE(w.is_owned, 0) AS is_owned "
+            "COALESCE(w.is_owned, 0) AS is_owned, "
+            f"{effective_expr} "
             "FROM products p "
             "LEFT JOIN watchlist w ON w.product_id = p.product_id "
+            + imusic_join
             + clause
             + f"ORDER BY {sort_clause}"
         )
