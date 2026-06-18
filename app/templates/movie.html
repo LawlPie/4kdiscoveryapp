@@ -36,13 +36,38 @@
             {% if cheapest.edition %}<span class="text-slate-400">({{ cheapest.edition }})</span>{% endif %}
         </p>
 
+        <!-- Cross-retailer price comparison (cheapest at each site) -->
+        {% if compare.best_imusic %}
+        {% set pk = compare.best_pk %}
+        {% set im = compare.best_imusic %}
+        <div class="flex flex-wrap gap-3">
+            <div class="flex-1 rounded-xl border px-4 py-2
+                        {{ 'border-emerald-500/60 bg-emerald-500/10' if pk and im and pk <= im else 'border-slate-800 bg-slate-900/40' }}">
+                <div class="text-xs text-slate-400">Platekompaniet</div>
+                <div class="text-lg font-bold text-emerald-400">{{ pk|nok }}</div>
+            </div>
+            <div class="flex-1 rounded-xl border px-4 py-2
+                        {{ 'border-emerald-500/60 bg-emerald-500/10' if pk and im and im < pk else 'border-slate-800 bg-slate-900/40' }}">
+                <div class="text-xs text-slate-400">iMusic</div>
+                <div class="text-lg font-bold text-emerald-400">{{ im|nok }}</div>
+            </div>
+            {% if pk and im %}
+            <div class="flex items-center text-sm font-semibold {{ 'text-amber-300' if im < pk else 'text-slate-400' }}">
+                {% if im < pk %}iMusic saves {{ (pk - im)|nok }}{% elif pk < im %}Platekompaniet saves {{ (im - pk)|nok }}{% else %}Same price{% endif %}
+            </div>
+            {% endif %}
+        </div>
+        <p class="text-[11px] text-slate-500">Compared per matching barcode (EAN); editions without a match at both stores aren't compared.</p>
+        {% endif %}
+
         <!-- Variants table -->
         <div class="overflow-hidden rounded-2xl border border-slate-800">
             <table class="w-full text-left text-sm">
                 <thead class="bg-slate-900 text-xs uppercase tracking-wide text-slate-400">
                     <tr>
                         <th class="px-4 py-2">Edition</th>
-                        <th class="px-4 py-2">Price</th>
+                        <th class="px-4 py-2">Platekompaniet</th>
+                        <th class="px-4 py-2">iMusic</th>
                         <th class="px-4 py-2 hidden sm:table-cell">Stock</th>
                         <th class="px-4 py-2 text-right">Actions</th>
                     </tr>
@@ -71,12 +96,23 @@
                             </div>
                             {% endif %}
                         </td>
-                        <!-- Price -->
+                        <!-- Platekompaniet price -->
                         <td class="px-4 py-3 align-top">
-                            <span class="font-bold text-emerald-400">{{ v.current_price|nok }}</span>
+                            <span class="font-bold {{ 'text-emerald-400' if not v.imusic_price or v.current_price <= v.imusic_price else 'text-slate-300' }}">{{ v.current_price|nok }}</span>
                             {% if v.original_price and v.original_price > (v.current_price or 0) %}
                             <span class="ml-1 text-xs text-slate-500 line-through">{{ v.original_price|nok }}</span>
                             <span class="ml-1 text-[11px] font-semibold text-emerald-400">−{{ v.discount_pct|round(0)|int }}%</span>
+                            {% endif %}
+                        </td>
+                        <!-- iMusic price (same EAN) -->
+                        <td class="px-4 py-3 align-top">
+                            {% if v.imusic_price %}
+                            <a href="{{ v.imusic_url }}" target="_blank" rel="noopener"
+                               class="font-bold hover:underline {{ 'text-amber-300' if v.current_price and v.imusic_price < v.current_price else 'text-slate-300' }}">
+                                {{ v.imusic_price|nok }}
+                            </a>
+                            {% else %}
+                            <span class="text-slate-600">—</span>
                             {% endif %}
                         </td>
                         <!-- Stock -->

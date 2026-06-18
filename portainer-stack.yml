@@ -51,6 +51,7 @@ services:
       SCRAPE_MAX_ITEMS: "${SCRAPE_MAX_ITEMS:-1000}"
       SCRAPE_ONLY_ON_OFFER: "${SCRAPE_ONLY_ON_OFFER:-false}"
       SCRAPE_DELAY_SECONDS: "${SCRAPE_DELAY_SECONDS:-1.5}"
+      SCRAPE_IMUSIC: "${SCRAPE_IMUSIC:-true}"
       TZ: "${TZ:-Europe/Oslo}"
 
       # ----- Notifications (set these in the Portainer env-vars panel) -----

@@ -70,6 +70,7 @@
                 <span><strong class="text-emerald-400">{{ stats.on_sale }}</strong> on sale</span>
                 <span><strong class="text-rose-400">{{ stats.favorites }}</strong> favourited</span>
                 <span><strong class="text-emerald-300">{{ stats.owned }}</strong> owned</span>
+                {% if stats.imusic %}<span><strong class="text-amber-300">{{ stats.imusic }}</strong> iMusic</span>{% endif %}
                 {% if stats.last_updated %}
                 <span class="ml-auto">Last update: {{ stats.last_updated.replace('T', ' ') }} UTC</span>
                 {% endif %}

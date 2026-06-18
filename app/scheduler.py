@@ -17,6 +17,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from .config import settings
+from .imusic_scraper import run_imusic_scrape
 from .scraper import run_scrape
 
 logger = logging.getLogger("scheduler")
@@ -34,8 +35,16 @@ def _job() -> None:
         logger.info("A scrape is already running; skipping this trigger.")
         return
     try:
-        _last_result = run_scrape()
-        _last_result["finished_at"] = datetime.utcnow().isoformat(timespec="seconds")
+        result = run_scrape()
+        # iMusic runs after Platekompaniet so EANs exist to compare against; a
+        # failure there must not lose the Platekompaniet result.
+        try:
+            result["imusic"] = run_imusic_scrape()
+        except Exception:
+            logger.exception("iMusic scrape failed (Platekompaniet result kept)")
+            result["imusic"] = {"error": True}
+        result["finished_at"] = datetime.utcnow().isoformat(timespec="seconds")
+        _last_result = result
     except Exception:
         logger.exception("Scheduled scrape failed")
     finally:

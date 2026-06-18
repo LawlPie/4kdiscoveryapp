@@ -37,6 +37,7 @@ _ATTRIBUTES = [
     "stock_status", "custom_stock_status_plp", "in_stock",
     "objectID", "sku", "product_id",
     "product_family", "edition",  # for grouping editions of the same release
+    "ean", "bestillingsnummer",   # barcode, for cross-retailer (iMusic) matching
 ]
 
 
@@ -157,6 +158,8 @@ def _parse_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
     family = hit.get("product_family")
     family = str(family) if family else None
     edition = (hit.get("edition") or "").strip() or None
+    ean = hit.get("ean") or hit.get("bestillingsnummer")
+    ean = str(ean).strip() if ean else None
 
     return {
         "product_id": product_id,
@@ -172,6 +175,8 @@ def _parse_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
         "product_family": family,
         "edition": edition,
         "group_key": f"fam:{family}" if family else f"id:{product_id}",
+        "retailer": "platekompaniet",
+        "ean": ean,
     }
 
 

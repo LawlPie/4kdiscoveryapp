@@ -6,6 +6,8 @@ python-multipart==0.0.9        # form parsing (favourite fallback form)
 
 # --- Scraping ---
 httpx==0.27.0                  # queries Platekompaniet's Algolia JSON API
+curl_cffi==0.15.0             # browser-TLS impersonation for iMusic (defeats 418 block)
+beautifulsoup4==4.12.3         # parses iMusic's HTML product listings
 
 # --- Background scheduling ---
 apscheduler==3.10.4

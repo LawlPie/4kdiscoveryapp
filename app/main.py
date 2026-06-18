@@ -86,6 +86,20 @@ def _base_query(**params: Any) -> str:
     return urlencode(clean)
 
 
+def _attach_imusic(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Annotate each product with the matching iMusic offer (same EAN), if any."""
+    offers = db.get_offers_by_ean([p.get("ean") for p in products])
+    for p in products:
+        off = offers.get(p.get("ean"))
+        if off and off.get("current_price") is not None:
+            p["imusic_price"] = off["current_price"]
+            p["imusic_url"] = off["url"]
+            p["imusic_stock"] = off.get("stock_status")
+            cur = p.get("current_price")
+            p["cheaper_at_imusic"] = cur is not None and off["current_price"] < cur
+    return products
+
+
 # --------------------------------------------------------------------------- #
 # HTML pages
 # --------------------------------------------------------------------------- #
@@ -111,6 +125,7 @@ def dashboard(
     products = db.list_products(
         **filters, sort=sort, grouped=True, limit=pg["per_page"], offset=pg["offset"]
     )
+    _attach_imusic(products)  # show "cheaper at iMusic" badges where applicable
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -193,12 +208,21 @@ def movie_detail(request: Request, product_id: str):
             status_code=404,
         )
     variants = db.get_group_variants(product["group_key"])
+    _attach_imusic(variants)  # per-edition iMusic price (matched by EAN)
+
     # The cheapest in-scope variant is the "headline" of the page.
     cheapest = min(
         (v for v in variants if v.get("current_price") is not None),
         key=lambda v: v["current_price"],
         default=variants[0] if variants else product,
     )
+    # Film-level cheapest at each retailer (possibly different editions).
+    pk_prices = [v["current_price"] for v in variants if v.get("current_price") is not None]
+    im_prices = [v["imusic_price"] for v in variants if v.get("imusic_price") is not None]
+    compare = {
+        "best_pk": min(pk_prices) if pk_prices else None,
+        "best_imusic": min(im_prices) if im_prices else None,
+    }
     return templates.TemplateResponse(
         "movie.html",
         {
@@ -206,6 +230,7 @@ def movie_detail(request: Request, product_id: str):
             "product": product,
             "cheapest": cheapest,
             "variants": variants,
+            "compare": compare,
             "stats": db.get_stats(),
             "active_view": "",
         },

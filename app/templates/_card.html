@@ -80,6 +80,14 @@
             {% endif %}
         </div>
 
+        <!-- iMusic price comparison (matched by EAN) -->
+        {% if p.imusic_price %}
+        <div class="text-[11px] {{ 'text-amber-300' if p.cheaper_at_imusic else 'text-slate-500' }}">
+            {% if p.cheaper_at_imusic %}↓ cheaper at iMusic: {% else %}iMusic: {% endif %}
+            <span class="font-semibold">{{ p.imusic_price|nok }}</span>
+        </div>
+        {% endif %}
+
         <!-- Campaign tags -->
         {% if p.campaign_tags %}
         <div class="flex flex-wrap gap-1">

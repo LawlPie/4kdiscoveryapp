@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS products (
     product_family  TEXT,                      -- Platekompaniet's edition-group id
     edition         TEXT,                      -- e.g. "Steelbook Edition", "Limited Edition"
     group_key       TEXT,                      -- grouping key (fam:<id> or id:<id>)
+    retailer        TEXT NOT NULL DEFAULT 'platekompaniet',  -- source store
+    ean             TEXT,                      -- barcode, used to match across retailers
     first_seen      TEXT NOT NULL,
     last_seen       TEXT NOT NULL,
     updated_at      TEXT NOT NULL
@@ -120,16 +122,24 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
     # Add edition-grouping columns to products (cheapest-of-duplicates feature).
     p_cols = {row["name"] for row in conn.execute("PRAGMA table_info(products)")}
-    for col in ("product_family", "edition", "group_key"):
+    for col in ("product_family", "edition", "group_key", "ean"):
         if col not in p_cols:
             conn.execute(f"ALTER TABLE products ADD COLUMN {col} TEXT")
+    # Multi-retailer support (iMusic price comparison).
+    if "retailer" not in p_cols:
+        conn.execute(
+            "ALTER TABLE products ADD COLUMN retailer TEXT NOT NULL "
+            "DEFAULT 'platekompaniet'"
+        )
     # Backfill a sane group_key for rows that predate the column; the next scrape
     # replaces it with the real product_family-based key.
     conn.execute(
         "UPDATE products SET group_key = 'id:' || product_id WHERE group_key IS NULL"
     )
-    # Safe to create now that the column is guaranteed to exist.
+    # Safe to create now that the columns are guaranteed to exist.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_products_group ON products(group_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_ean ON products(ean)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_retailer ON products(retailer)")
 
 
 # --------------------------------------------------------------------------- #
@@ -175,6 +185,8 @@ def upsert_product(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, 
     discount_pct = item.get("discount_pct") or 0.0
     family = item.get("product_family")
     edition = item.get("edition")
+    retailer = item.get("retailer", "platekompaniet")
+    ean = item.get("ean")
     # Group editions of the same release together; fall back to a per-item group.
     group_key = item.get("group_key") or (
         f"fam:{family}" if family else f"id:{item['product_id']}"
@@ -190,14 +202,15 @@ def upsert_product(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, 
             INSERT INTO products (
                 product_id, title, url, image_url, current_price, original_price,
                 discount_pct, on_sale, campaign_tags, stock_status,
-                product_family, edition, group_key,
+                product_family, edition, group_key, retailer, ean,
                 first_seen, last_seen, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item["product_id"], item["title"], item["url"], item.get("image_url"),
                 current_price, original_price, discount_pct, on_sale, tags_json,
-                item.get("stock_status"), family, edition, group_key, now, now, now,
+                item.get("stock_status"), family, edition, group_key, retailer, ean,
+                now, now, now,
             ),
         )
         _record_history(conn, item["product_id"], current_price, original_price, now)
@@ -221,14 +234,14 @@ def upsert_product(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, 
         UPDATE products SET
             title = ?, url = ?, image_url = ?, current_price = ?, original_price = ?,
             discount_pct = ?, on_sale = ?, campaign_tags = ?, stock_status = ?,
-            product_family = ?, edition = ?, group_key = ?,
+            product_family = ?, edition = ?, group_key = ?, retailer = ?, ean = ?,
             last_seen = ?, updated_at = ?
         WHERE product_id = ?
         """,
         (
             item["title"], item["url"], item.get("image_url"), current_price,
             original_price, discount_pct, on_sale, tags_json,
-            item.get("stock_status"), family, edition, group_key,
+            item.get("stock_status"), family, edition, group_key, retailer, ean,
             now, now, item["product_id"],
         ),
     )
@@ -275,11 +288,20 @@ def _build_filters(
     exclude_owned: bool = False,
     campaign: str | None = None,
     search: str | None = None,
+    retailer: str | None = "platekompaniet",
 ) -> tuple[str, list[Any]]:
-    """Build a shared WHERE clause (+params) reused by list/count queries."""
+    """Build a shared WHERE clause (+params) reused by list/count queries.
+
+    `retailer` defaults to Platekompaniet so the browsable views never show raw
+    iMusic rows (those are used only as price-comparison data, matched by EAN).
+    Pass retailer=None to span all retailers.
+    """
     where: list[str] = []
     params: list[Any] = []
 
+    if retailer:
+        where.append("p.retailer = ?")
+        params.append(retailer)
     if only_on_sale:
         where.append("p.on_sale = 1")
     if only_favorites:
@@ -407,6 +429,30 @@ def get_group_variants(group_key: str) -> list[dict[str, Any]]:
     return [_row_to_product(r) for r in rows]
 
 
+def get_offers_by_ean(eans: list[str], retailer: str = "imusic") -> dict[str, dict[str, Any]]:
+    """Map EAN -> product offer from another retailer (for price comparison)."""
+    eans = [e for e in {e for e in eans if e}]  # de-dupe, drop blanks
+    if not eans:
+        return {}
+    placeholders = ",".join("?" * len(eans))
+    sql = (
+        f"SELECT * FROM products WHERE retailer = ? AND ean IN ({placeholders})"
+    )
+    with db_session() as conn:
+        rows = conn.execute(sql, (retailer, *eans)).fetchall()
+    # If a retailer somehow has duplicate EANs, keep the cheapest.
+    offers: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        o = _row_to_product(r)
+        cur = offers.get(o["ean"])
+        if cur is None or (
+            o.get("current_price") is not None
+            and (cur.get("current_price") is None or o["current_price"] < cur["current_price"])
+        ):
+            offers[o["ean"]] = o
+    return offers
+
+
 def get_product(product_id: str) -> dict[str, Any] | None:
     with db_session() as conn:
         row = conn.execute(
@@ -526,9 +572,15 @@ def toggle_owned(product_id: str) -> bool:
 def get_stats() -> dict[str, Any]:
     """Small dashboard summary used in the header."""
     with db_session() as conn:
-        total = conn.execute("SELECT COUNT(*) AS c FROM products").fetchone()["c"]
+        total = conn.execute(
+            "SELECT COUNT(*) AS c FROM products WHERE retailer = 'platekompaniet'"
+        ).fetchone()["c"]
         on_sale = conn.execute(
-            "SELECT COUNT(*) AS c FROM products WHERE on_sale = 1"
+            "SELECT COUNT(*) AS c FROM products "
+            "WHERE on_sale = 1 AND retailer = 'platekompaniet'"
+        ).fetchone()["c"]
+        imusic = conn.execute(
+            "SELECT COUNT(*) AS c FROM products WHERE retailer = 'imusic'"
         ).fetchone()["c"]
         favs = conn.execute(
             "SELECT COUNT(*) AS c FROM watchlist WHERE is_favorited = 1"
@@ -544,5 +596,6 @@ def get_stats() -> dict[str, Any]:
         "on_sale": on_sale,
         "favorites": favs,
         "owned": owned,
+        "imusic": imusic,
         "last_updated": last,
     }

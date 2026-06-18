@@ -87,6 +87,18 @@ class Settings:
     # Safety budget on total Algolia requests per full crawl.
     SCRAPE_MAX_QUERIES: int = _get_int("SCRAPE_MAX_QUERIES", 500)
 
+    # ----- iMusic (second retailer, for price comparison) ----------------
+    # iMusic hard-blocks non-browser clients (HTTP 418), so we fetch with
+    # curl_cffi impersonating Chrome's TLS fingerprint. Items are matched to
+    # Platekompaniet by EAN (barcode) for a same-disc price comparison.
+    SCRAPE_IMUSIC: bool = _get_bool("SCRAPE_IMUSIC", True)
+    IMUSIC_4K_URL: str = os.getenv(
+        "IMUSIC_4K_URL", "https://imusic.co/exposure/13562/4k-uhd-movies"
+    )
+    IMUSIC_IMPERSONATE: str = os.getenv("IMUSIC_IMPERSONATE", "chrome")
+    IMUSIC_MAX_PAGES: int = _get_int("IMUSIC_MAX_PAGES", 80)  # 100 items/page
+    IMUSIC_PAGE_SIZE: int = _get_int("IMUSIC_PAGE_SIZE", 100)
+
     # How often the background scraper runs, in hours.
     SCRAPE_INTERVAL_HOURS: float = _get_float("SCRAPE_INTERVAL_HOURS", 24.0)
     # Run a scrape immediately on startup (handy for a fresh install).

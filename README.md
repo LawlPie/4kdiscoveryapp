@@ -1,10 +1,10 @@
 # 📀 4K Discovery
 
 A self-hosted web app that tracks **4K Ultra HD Blu-ray deals** on the Norwegian
-retailer [Platekompaniet](https://www.platekompaniet.no). It scrapes the 4K
-category daily, stores price history, lets you favourite titles, and sends a
-**Discord / Telegram notification** when a watched movie drops in price or enters
-a campaign.
+retailer [Platekompaniet](https://www.platekompaniet.no), and **compares prices
+against [iMusic](https://imusic.co)**. It scrapes the 4K catalogues daily, stores
+price history, lets you favourite titles, and sends a **Discord / Telegram
+notification** when a watched movie drops in price or enters a campaign.
 
 The entire stack — web UI, background scraper, and SQLite database — runs in a
 **single container**, so it's trivial to host on a NAS, home server, or any box
@@ -21,6 +21,10 @@ with Docker.
   limited editions) are collapsed into one card showing the **cheapest** price;
   click through to a detail page listing every edition with its price,
   steelbook/limited flag, and stock.
+- **⚖️ iMusic price comparison** — the same disc (matched by **EAN/barcode**) is
+  compared against iMusic; cards flag "cheaper at iMusic" and each movie's detail
+  page shows Platekompaniet vs iMusic per edition with the cheaper side
+  highlighted. Both retailers price in NOK, so it's a direct comparison.
 - **❤️ Watchlist** — favourite any title; the heart toggles instantly via an
   async API call (no page reload).
 - **✓ Collection** — mark titles you already own; they're hidden from the
@@ -120,6 +124,8 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | `SCRAPE_FULL_CATALOGUE` | `true` | Fetch **all** ~6500 4K titles (bisects the id space to beat Algolia's 1000-cap). Set `false` for the faster top-popular subset |
 | `SCRAPE_MAX_ITEMS` | `1000` | Cap for the top-popular mode only (ignored in full mode) |
 | `SCRAPE_ONLY_ON_OFFER` | `false` | Store only items currently on offer/campaign |
+| `SCRAPE_IMUSIC` | `true` | Also scrape iMusic's 4K catalogue for price comparison |
+| `IMUSIC_IMPERSONATE` | `chrome` | Browser TLS fingerprint used to fetch iMusic |
 | `SCRAPE_DELAY_SECONDS` | `1.5` | Politeness delay between API pages |
 | `ALGOLIA_APP_ID` / `ALGOLIA_API_KEY` | (site defaults) | Platekompaniet's public search backend |
 | `ALGOLIA_INDEX` | `plate_prod_default_products` | Algolia product index |
@@ -153,7 +159,8 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 
 - **`products`** — current state of each discovered 4K item (title, slug/id,
   current & original price, discount %, campaign tags, stock, timestamps,
-  plus `product_family`/`edition`/`group_key` for edition grouping).
+  `product_family`/`edition`/`group_key` for edition grouping, plus
+  `retailer`/`ean` for multi-store price comparison).
 - **`price_history`** — append-only `(product_id, price, original_price, date)`
   snapshots for trend tracking.
 - **`watchlist`** — `(product_id, is_favorited, is_owned)` — per-product user
@@ -178,6 +185,14 @@ any sub-range with ≤1000 hits is fetched whole, larger ranges split in half, a
 empty ranges prune instantly. This pulls the entire catalogue in ~30 small
 queries (measured: all 6542 items in ~6s) — category-independent and complete.
 
+**iMusic.** iMusic blocks ordinary HTTP clients (HTTP 418, a TLS-fingerprint
+block), so [`app/imusic_scraper.py`](app/imusic_scraper.py) fetches with
+`curl_cffi` (Chrome TLS impersonation) and parses the HTML listing. Each product
+URL contains its EAN, which is matched against Platekompaniet's `ean` for a
+same-disc price comparison. If iMusic ever changes its blocking and the scrape
+returns 0 items, set `SCRAPE_IMUSIC=false` to disable it without affecting
+Platekompaniet, or try a different `IMUSIC_IMPERSONATE` value.
+
 If a run returns 0 items, Platekompaniet has likely rotated its Algolia
 credentials or renamed the index/facet. Re-extract them from the site's JS
 bundle and set `ALGOLIA_APP_ID`, `ALGOLIA_API_KEY`, `ALGOLIA_INDEX`, and
@@ -196,7 +211,8 @@ bundle and set `ALGOLIA_APP_ID`, `ALGOLIA_API_KEY`, `ALGOLIA_INDEX`, and
 │   ├── main.py            # FastAPI app + routes
 │   ├── config.py          # env-driven settings
 │   ├── database.py        # SQLite schema + queries
-│   ├── scraper.py         # Algolia API client + pagination
+│   ├── scraper.py         # Platekompaniet Algolia API client + pagination
+│   ├── imusic_scraper.py  # iMusic scraper (curl_cffi + BeautifulSoup)
 │   ├── scheduler.py       # APScheduler background worker
 │   ├── notifications.py   # Discord / Telegram webhooks
 │   ├── seed.py            # demo data
