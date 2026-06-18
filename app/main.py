@@ -106,9 +106,10 @@ def dashboard(
         search=search,
         exclude_owned=True,
     )
-    pg = _paginate(db.count_products(**filters), page)
+    # Group editions of the same release; the card shows the cheapest variant.
+    pg = _paginate(db.count_products(grouped=True, **filters), page)
     products = db.list_products(
-        **filters, sort=sort, limit=pg["per_page"], offset=pg["offset"]
+        **filters, sort=sort, grouped=True, limit=pg["per_page"], offset=pg["offset"]
     )
     return templates.TemplateResponse(
         "dashboard.html",
@@ -177,6 +178,36 @@ def owned(
             "pg": pg,
             "base_query": _base_query(sort=sort, q=search or ""),
             "active_view": "owned",
+        },
+    )
+
+
+@app.get("/movie/{product_id}", response_class=HTMLResponse)
+def movie_detail(request: Request, product_id: str):
+    """Detail view: every edition of a release with prices, format flags, stock."""
+    product = db.get_product(product_id)
+    if product is None:
+        return templates.TemplateResponse(
+            "movie.html",
+            {"request": request, "product": None, "variants": [], "stats": db.get_stats()},
+            status_code=404,
+        )
+    variants = db.get_group_variants(product["group_key"])
+    # The cheapest in-scope variant is the "headline" of the page.
+    cheapest = min(
+        (v for v in variants if v.get("current_price") is not None),
+        key=lambda v: v["current_price"],
+        default=variants[0] if variants else product,
+    )
+    return templates.TemplateResponse(
+        "movie.html",
+        {
+            "request": request,
+            "product": product,
+            "cheapest": cheapest,
+            "variants": variants,
+            "stats": db.get_stats(),
+            "active_view": "",
         },
     )
 

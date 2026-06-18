@@ -22,20 +22,28 @@ function removeCard(productId) {
     setTimeout(() => card.remove(), 250);
 }
 
-/** Update the heart button's icon/state within a card. */
+/** The container holding a product's buttons — a grid card or a detail-page row. */
+function productScope(productId) {
+    return (
+        document.getElementById(`card-${productId}`) ||
+        document.getElementById(`row-${productId}`)
+    );
+}
+
+/** Update the heart button's icon/state for a product (card or row). */
 function syncHeart(productId, favorited) {
-    const card = document.getElementById(`card-${productId}`);
-    const btn = card && card.querySelector(".heart-btn");
+    const scope = productScope(productId);
+    const btn = scope && scope.querySelector(".heart-btn");
     if (!btn) return;
     const icon = btn.querySelector(".heart-icon");
     if (icon) icon.textContent = favorited ? "❤️" : "🤍";
     btn.dataset.favorited = favorited ? "true" : "false";
 }
 
-/** Update the owned button's icon/colour within a card. */
+/** Update the owned button's icon/colour for a product (card or row). */
 function syncOwned(productId, owned) {
-    const card = document.getElementById(`card-${productId}`);
-    const btn = card && card.querySelector(".owned-btn");
+    const scope = productScope(productId);
+    const btn = scope && scope.querySelector(".owned-btn");
     if (!btn) return;
     btn.dataset.owned = owned ? "true" : "false";
     btn.classList.toggle("bg-emerald-500", owned);

@@ -17,6 +17,10 @@ with Docker.
 - **🌊 Trawler view** — all current 4K deals, with title **search**,
   **pagination** (100/page), sorting (biggest discount, price, title, recency)
   and filtering by campaign tag.
+- **🎬 Edition grouping** — variants of the same release (steelbook, imports,
+  limited editions) are collapsed into one card showing the **cheapest** price;
+  click through to a detail page listing every edition with its price,
+  steelbook/limited flag, and stock.
 - **❤️ Watchlist** — favourite any title; the heart toggles instantly via an
   async API call (no page reload).
 - **✓ Collection** — mark titles you already own; they're hidden from the
@@ -133,6 +137,7 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 |---|---|---|
 | `GET`  | `/` | Trawler view (HTML) |
 | `GET`  | `/watchlist` | Watchlist view (HTML) |
+| `GET`  | `/movie/{product_id}` | Detail view — all editions of a release (HTML) |
 | `POST` | `/api/favorite/{product_id}` | Toggle favourite → `{is_favorited}` |
 | `POST` | `/api/owned/{product_id}` | Toggle owned/collection → `{is_owned}` |
 | `GET`  | `/owned` | Collection view (HTML) |
@@ -147,7 +152,8 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 ## 🗄️ Database schema
 
 - **`products`** — current state of each discovered 4K item (title, slug/id,
-  current & original price, discount %, campaign tags, stock, timestamps).
+  current & original price, discount %, campaign tags, stock, timestamps,
+  plus `product_family`/`edition`/`group_key` for edition grouping).
 - **`price_history`** — append-only `(product_id, price, original_price, date)`
   snapshots for trend tracking.
 - **`watchlist`** — `(product_id, is_favorited, is_owned)` — per-product user

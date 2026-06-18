@@ -70,6 +70,9 @@ CREATE TABLE IF NOT EXISTS products (
     on_sale         INTEGER DEFAULT 0,         -- 1 if discounted or campaign tagged
     campaign_tags   TEXT DEFAULT '[]',         -- JSON list of promo strings
     stock_status    TEXT,                      -- e.g. "På lager", "Utsolgt"
+    product_family  TEXT,                      -- Platekompaniet's edition-group id
+    edition         TEXT,                      -- e.g. "Steelbook Edition", "Limited Edition"
+    group_key       TEXT,                      -- grouping key (fam:<id> or id:<id>)
     first_seen      TEXT NOT NULL,
     last_seen       TEXT NOT NULL,
     updated_at      TEXT NOT NULL
@@ -94,6 +97,8 @@ CREATE TABLE IF NOT EXISTS watchlist (
 
 CREATE INDEX IF NOT EXISTS idx_history_product ON price_history(product_id);
 CREATE INDEX IF NOT EXISTS idx_products_onsale ON products(on_sale);
+-- idx_products_group is created in _migrate(), after the group_key column exists
+-- (so this script also succeeds on databases that predate that column).
 """
 
 
@@ -107,11 +112,24 @@ def init_db() -> None:
 def _migrate(conn: sqlite3.Connection) -> None:
     """Idempotent, additive migrations for databases created before a feature."""
     # Add watchlist.is_owned to pre-existing databases (the "owned" collection).
-    cols = {row["name"] for row in conn.execute("PRAGMA table_info(watchlist)")}
-    if "is_owned" not in cols:
+    wl_cols = {row["name"] for row in conn.execute("PRAGMA table_info(watchlist)")}
+    if "is_owned" not in wl_cols:
         conn.execute(
             "ALTER TABLE watchlist ADD COLUMN is_owned INTEGER NOT NULL DEFAULT 0"
         )
+
+    # Add edition-grouping columns to products (cheapest-of-duplicates feature).
+    p_cols = {row["name"] for row in conn.execute("PRAGMA table_info(products)")}
+    for col in ("product_family", "edition", "group_key"):
+        if col not in p_cols:
+            conn.execute(f"ALTER TABLE products ADD COLUMN {col} TEXT")
+    # Backfill a sane group_key for rows that predate the column; the next scrape
+    # replaces it with the real product_family-based key.
+    conn.execute(
+        "UPDATE products SET group_key = 'id:' || product_id WHERE group_key IS NULL"
+    )
+    # Safe to create now that the column is guaranteed to exist.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_group ON products(group_key)")
 
 
 # --------------------------------------------------------------------------- #
@@ -155,6 +173,12 @@ def upsert_product(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, 
     original_price = item.get("original_price")
     on_sale = 1 if item.get("on_sale") else 0
     discount_pct = item.get("discount_pct") or 0.0
+    family = item.get("product_family")
+    edition = item.get("edition")
+    # Group editions of the same release together; fall back to a per-item group.
+    group_key = item.get("group_key") or (
+        f"fam:{family}" if family else f"id:{item['product_id']}"
+    )
 
     existing = conn.execute(
         "SELECT * FROM products WHERE product_id = ?", (item["product_id"],)
@@ -166,13 +190,14 @@ def upsert_product(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, 
             INSERT INTO products (
                 product_id, title, url, image_url, current_price, original_price,
                 discount_pct, on_sale, campaign_tags, stock_status,
+                product_family, edition, group_key,
                 first_seen, last_seen, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item["product_id"], item["title"], item["url"], item.get("image_url"),
                 current_price, original_price, discount_pct, on_sale, tags_json,
-                item.get("stock_status"), now, now, now,
+                item.get("stock_status"), family, edition, group_key, now, now, now,
             ),
         )
         _record_history(conn, item["product_id"], current_price, original_price, now)
@@ -196,13 +221,15 @@ def upsert_product(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, 
         UPDATE products SET
             title = ?, url = ?, image_url = ?, current_price = ?, original_price = ?,
             discount_pct = ?, on_sale = ?, campaign_tags = ?, stock_status = ?,
+            product_family = ?, edition = ?, group_key = ?,
             last_seen = ?, updated_at = ?
         WHERE product_id = ?
         """,
         (
             item["title"], item["url"], item.get("image_url"), current_price,
             original_price, discount_pct, on_sale, tags_json,
-            item.get("stock_status"), now, now, item["product_id"],
+            item.get("stock_status"), family, edition, group_key,
+            now, now, item["product_id"],
         ),
     )
 
@@ -274,11 +301,15 @@ def _build_filters(
     return clause, params
 
 
-def count_products(**filters: Any) -> int:
-    """Total number of products matching the given filters (for pagination)."""
+def count_products(*, grouped: bool = False, **filters: Any) -> int:
+    """
+    Number of rows matching the filters (for pagination).
+    When `grouped`, counts distinct edition-groups instead of individual items.
+    """
     clause, params = _build_filters(**filters)
+    select = "COUNT(DISTINCT p.group_key)" if grouped else "COUNT(*)"
     sql = (
-        "SELECT COUNT(*) AS c FROM products p "
+        f"SELECT {select} AS c FROM products p "
         "LEFT JOIN watchlist w ON w.product_id = p.product_id " + clause
     )
     with db_session() as conn:
@@ -294,6 +325,7 @@ def list_products(
     campaign: str | None = None,
     search: str | None = None,
     sort: str = "discount",
+    grouped: bool = False,
     limit: int | None = None,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
@@ -301,7 +333,9 @@ def list_products(
     Fetch products joined with their watchlist (favourite/owned) state.
 
     sort: "discount" | "price_asc" | "price_desc" | "title" | "recent"
-    Pass `limit`/`offset` for pagination.
+    When `grouped`, returns one row per edition-group (the cheapest variant),
+    plus a `variant_count` of how many editions matched. Pass `limit`/`offset`
+    for pagination.
     """
     clause, params = _build_filters(
         only_on_sale=only_on_sale,
@@ -312,28 +346,64 @@ def list_products(
         search=search,
     )
 
+    # Unprefixed columns so the same ORDER BY works for the plain and grouped SQL.
     sort_clause = {
-        "discount": "p.discount_pct DESC, p.current_price ASC",
-        "price_asc": "p.current_price ASC",
-        "price_desc": "p.current_price DESC",
-        "title": "p.title COLLATE NOCASE ASC",
-        "recent": "p.updated_at DESC",
-    }.get(sort, "p.discount_pct DESC")
+        "discount": "discount_pct DESC, current_price ASC",
+        "price_asc": "current_price IS NULL, current_price ASC",
+        "price_desc": "current_price DESC",
+        "title": "title COLLATE NOCASE ASC",
+        "recent": "updated_at DESC",
+    }.get(sort, "discount_pct DESC")
 
-    sql = (
-        "SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited, "
-        "COALESCE(w.is_owned, 0) AS is_owned "
-        "FROM products p "
-        "LEFT JOIN watchlist w ON w.product_id = p.product_id "
-        + clause
-        + f"ORDER BY {sort_clause}"
-    )
+    if grouped:
+        # Rank variants within each group by price; keep the cheapest as the
+        # representative (rn = 1) and expose how many editions matched.
+        sql = (
+            "WITH base AS ("
+            "  SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited, "
+            "         COALESCE(w.is_owned, 0) AS is_owned "
+            "  FROM products p "
+            "  LEFT JOIN watchlist w ON w.product_id = p.product_id "
+            + clause
+            + "), ranked AS ("
+            "  SELECT *, "
+            "    COUNT(*) OVER (PARTITION BY group_key) AS variant_count, "
+            "    ROW_NUMBER() OVER (PARTITION BY group_key "
+            "      ORDER BY (current_price IS NULL), current_price ASC, product_id ASC) AS rn "
+            "  FROM base "
+            ") SELECT * FROM ranked WHERE rn = 1 "
+            + f"ORDER BY {sort_clause}"
+        )
+    else:
+        sql = (
+            "SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited, "
+            "COALESCE(w.is_owned, 0) AS is_owned "
+            "FROM products p "
+            "LEFT JOIN watchlist w ON w.product_id = p.product_id "
+            + clause
+            + f"ORDER BY {sort_clause}"
+        )
+
     if limit is not None:
         sql += " LIMIT ? OFFSET ?"
         params = params + [limit, offset]
 
     with db_session() as conn:
         rows = conn.execute(sql, params).fetchall()
+    return [_row_to_product(r) for r in rows]
+
+
+def get_group_variants(group_key: str) -> list[dict[str, Any]]:
+    """All editions in a group (cheapest first) with favourite/owned state."""
+    sql = (
+        "SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited, "
+        "COALESCE(w.is_owned, 0) AS is_owned "
+        "FROM products p LEFT JOIN watchlist w ON w.product_id = p.product_id "
+        "WHERE p.group_key = ? "
+        "ORDER BY (p.current_price IS NULL), p.current_price ASC"
+    )
+    with db_session() as conn:
+        rows = conn.execute(sql, (group_key,)).fetchall()
     return [_row_to_product(r) for r in rows]
 
 

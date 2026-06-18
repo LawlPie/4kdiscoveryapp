@@ -35,6 +35,7 @@ _ATTRIBUTES = [
     "price", "active_price", "pimcore", "campaigns",
     "stock_status", "custom_stock_status_plp", "in_stock",
     "objectID", "sku", "product_id",
+    "product_family", "edition",  # for grouping editions of the same release
 ]
 
 
@@ -148,6 +149,14 @@ def _parse_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
 
     product_id = str(hit.get("objectID") or hit.get("sku") or hit.get("product_id") or url)
 
+    # Edition grouping: Platekompaniet's product_family ties variants (steelbook,
+    # imports, limited editions) of the same release together. Fall back to a
+    # per-item group when the family is missing (~10% of titles).
+    family = hit.get("product_family")
+    family = str(family) if family else None
+    group_key = f"fam:{family}" if family else f"id:{product_id}"
+    edition = (hit.get("edition") or "").strip() or None
+
     return {
         "product_id": product_id,
         "title": name,
@@ -159,6 +168,9 @@ def _parse_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
         "on_sale": on_sale,
         "campaign_tags": tags,
         "stock_status": hit.get("stock_status") or hit.get("custom_stock_status_plp"),
+        "product_family": family,
+        "edition": edition,
+        "group_key": group_key,
     }
 
 
