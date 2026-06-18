@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional
+from math import ceil
+from typing import Any, Optional
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -64,6 +66,26 @@ def _format_nok(value):
 templates.env.filters["nok"] = _format_nok
 
 
+def _paginate(total: int, page: int) -> dict[str, int]:
+    """Clamp the page and compute offset/total_pages for `total` rows."""
+    per_page = settings.PAGE_SIZE
+    total_pages = max(1, ceil(total / per_page)) if total else 1
+    page = max(1, min(page, total_pages))
+    return {
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+        "total": total,
+        "offset": (page - 1) * per_page,
+    }
+
+
+def _base_query(**params: Any) -> str:
+    """URL-encode the active filter params (minus `page`) for pagination links."""
+    clean = {k: v for k, v in params.items() if v not in (None, "")}
+    return urlencode(clean)
+
+
 # --------------------------------------------------------------------------- #
 # HTML pages
 # --------------------------------------------------------------------------- #
@@ -73,13 +95,20 @@ def dashboard(
     sort: str = "discount",
     campaign: Optional[str] = None,
     on_sale: int = 1,
+    q: Optional[str] = None,
+    page: int = 1,
 ):
-    """The Trawler view — all 4K deals with filtering/sorting (owned hidden)."""
-    products = db.list_products(
+    """The Trawler view — all 4K deals with filtering/search/sorting (owned hidden)."""
+    search = (q or "").strip() or None
+    filters = dict(
         only_on_sale=bool(on_sale),
         campaign=campaign or None,
-        sort=sort,
+        search=search,
         exclude_owned=True,
+    )
+    pg = _paginate(db.count_products(**filters), page)
+    products = db.list_products(
+        **filters, sort=sort, limit=pg["per_page"], offset=pg["offset"]
     )
     return templates.TemplateResponse(
         "dashboard.html",
@@ -91,6 +120,9 @@ def dashboard(
             "sort": sort,
             "campaign": campaign or "",
             "on_sale": on_sale,
+            "q": search or "",
+            "pg": pg,
+            "base_query": _base_query(sort=sort, campaign=campaign or "", on_sale=on_sale, q=search or ""),
             "active_view": "dashboard",
             "last_scrape": get_last_result(),
         },
@@ -98,9 +130,16 @@ def dashboard(
 
 
 @app.get("/watchlist", response_class=HTMLResponse)
-def watchlist(request: Request, sort: str = "discount"):
+def watchlist(
+    request: Request, sort: str = "discount", q: Optional[str] = None, page: int = 1
+):
     """The Hearts view — only favourited items (owned hidden)."""
-    products = db.list_products(only_favorites=True, exclude_owned=True, sort=sort)
+    search = (q or "").strip() or None
+    filters = dict(only_favorites=True, exclude_owned=True, search=search)
+    pg = _paginate(db.count_products(**filters), page)
+    products = db.list_products(
+        **filters, sort=sort, limit=pg["per_page"], offset=pg["offset"]
+    )
     return templates.TemplateResponse(
         "watchlist.html",
         {
@@ -108,15 +147,25 @@ def watchlist(request: Request, sort: str = "discount"):
             "products": products,
             "stats": db.get_stats(),
             "sort": sort,
+            "q": search or "",
+            "pg": pg,
+            "base_query": _base_query(sort=sort, q=search or ""),
             "active_view": "watchlist",
         },
     )
 
 
 @app.get("/owned", response_class=HTMLResponse)
-def owned(request: Request, sort: str = "title"):
+def owned(
+    request: Request, sort: str = "title", q: Optional[str] = None, page: int = 1
+):
     """The Collection view — movies the user already owns."""
-    products = db.list_products(only_owned=True, sort=sort)
+    search = (q or "").strip() or None
+    filters = dict(only_owned=True, search=search)
+    pg = _paginate(db.count_products(**filters), page)
+    products = db.list_products(
+        **filters, sort=sort, limit=pg["per_page"], offset=pg["offset"]
+    )
     return templates.TemplateResponse(
         "owned.html",
         {
@@ -124,6 +173,9 @@ def owned(request: Request, sort: str = "title"):
             "products": products,
             "stats": db.get_stats(),
             "sort": sort,
+            "q": search or "",
+            "pg": pg,
+            "base_query": _base_query(sort=sort, q=search or ""),
             "active_view": "owned",
         },
     )
@@ -166,6 +218,9 @@ def api_products(
     favorites: int = 0,
     owned: int = 0,
     exclude_owned: int = 0,
+    search: Optional[str] = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
 ):
     """JSON list endpoint, useful for debugging or external integrations."""
     return db.list_products(
@@ -174,7 +229,10 @@ def api_products(
         only_owned=bool(owned),
         exclude_owned=bool(exclude_owned),
         campaign=campaign or None,
+        search=(search or "").strip() or None,
         sort=sort,
+        limit=limit,
+        offset=offset,
     )
 
 

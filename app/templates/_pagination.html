@@ -1,0 +1,62 @@
+{#
+  Reusable pager. `pg` is the dict from _paginate(); `base_query` is the
+  URL-encoded set of active filters (without page) so links preserve them.
+#}
+{% macro pager(pg, base_query) %}
+{% if pg.total_pages > 1 %}
+{% set sep = (base_query ~ '&') if base_query else '' %}
+{% set start = [1, pg.page - 2]|max %}
+{% set end = [pg.total_pages, pg.page + 2]|min %}
+<nav class="mt-8 flex flex-wrap items-center justify-center gap-1 text-sm" aria-label="Pagination">
+
+    {# Prev #}
+    {% if pg.page > 1 %}
+    <a href="?{{ sep }}page={{ pg.page - 1 }}"
+       class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-300 hover:bg-slate-800">← Prev</a>
+    {% else %}
+    <span class="rounded-lg border border-slate-800 px-3 py-2 text-slate-600">← Prev</span>
+    {% endif %}
+
+    {# First + ellipsis #}
+    {% if start > 1 %}
+    <a href="?{{ sep }}page=1" class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-300 hover:bg-slate-800">1</a>
+    {% if start > 2 %}<span class="px-1 text-slate-600">…</span>{% endif %}
+    {% endif %}
+
+    {# Window #}
+    {% for p in range(start, end + 1) %}
+        {% if p == pg.page %}
+        <span class="rounded-lg bg-brand px-3 py-2 font-semibold text-white">{{ p }}</span>
+        {% else %}
+        <a href="?{{ sep }}page={{ p }}" class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-300 hover:bg-slate-800">{{ p }}</a>
+        {% endif %}
+    {% endfor %}
+
+    {# Last + ellipsis #}
+    {% if end < pg.total_pages %}
+    {% if end < pg.total_pages - 1 %}<span class="px-1 text-slate-600">…</span>{% endif %}
+    <a href="?{{ sep }}page={{ pg.total_pages }}" class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-300 hover:bg-slate-800">{{ pg.total_pages }}</a>
+    {% endif %}
+
+    {# Next #}
+    {% if pg.page < pg.total_pages %}
+    <a href="?{{ sep }}page={{ pg.page + 1 }}"
+       class="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-slate-300 hover:bg-slate-800">Next →</a>
+    {% else %}
+    <span class="rounded-lg border border-slate-800 px-3 py-2 text-slate-600">Next →</span>
+    {% endif %}
+</nav>
+{% endif %}
+{% endmacro %}
+
+{#
+  Small "Showing X–Y of Z" summary line.
+#}
+{% macro summary(pg, count) %}
+{% if pg.total %}
+<p class="text-sm text-slate-400">
+    Showing <strong class="text-slate-200">{{ pg.offset + 1 }}–{{ pg.offset + count }}</strong>
+    of <strong class="text-slate-200">{{ "{:,}".format(pg.total).replace(",", " ") }}</strong>
+</p>
+{% endif %}
+{% endmacro %}

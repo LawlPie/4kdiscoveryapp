@@ -116,6 +116,8 @@ class Settings:
     # ----- Web server ----------------------------------------------------
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = _get_int("PORT", 8000)
+    # Items shown per page in the web UI.
+    PAGE_SIZE: int = _get_int("PAGE_SIZE", 100)
 
     @property
     def discord_enabled(self) -> bool:

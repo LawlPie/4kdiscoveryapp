@@ -240,20 +240,16 @@ def _record_history(
 # --------------------------------------------------------------------------- #
 # Read operations (used by the web UI / API)
 # --------------------------------------------------------------------------- #
-def list_products(
+def _build_filters(
     *,
     only_on_sale: bool = False,
     only_favorites: bool = False,
     only_owned: bool = False,
     exclude_owned: bool = False,
     campaign: str | None = None,
-    sort: str = "discount",
-) -> list[dict[str, Any]]:
-    """
-    Fetch products joined with their watchlist (favourite/owned) state.
-
-    sort: "discount" | "price_asc" | "price_desc" | "title" | "recent"
-    """
+    search: str | None = None,
+) -> tuple[str, list[Any]]:
+    """Build a shared WHERE clause (+params) reused by list/count queries."""
     where: list[str] = []
     params: list[Any] = []
 
@@ -270,6 +266,51 @@ def list_products(
         # campaign_tags is JSON text; a LIKE match is good enough for filtering.
         where.append("p.campaign_tags LIKE ?")
         params.append(f"%{campaign}%")
+    if search:
+        where.append("p.title LIKE ? COLLATE NOCASE")
+        params.append(f"%{search}%")
+
+    clause = ("WHERE " + " AND ".join(where) + " ") if where else ""
+    return clause, params
+
+
+def count_products(**filters: Any) -> int:
+    """Total number of products matching the given filters (for pagination)."""
+    clause, params = _build_filters(**filters)
+    sql = (
+        "SELECT COUNT(*) AS c FROM products p "
+        "LEFT JOIN watchlist w ON w.product_id = p.product_id " + clause
+    )
+    with db_session() as conn:
+        return conn.execute(sql, params).fetchone()["c"]
+
+
+def list_products(
+    *,
+    only_on_sale: bool = False,
+    only_favorites: bool = False,
+    only_owned: bool = False,
+    exclude_owned: bool = False,
+    campaign: str | None = None,
+    search: str | None = None,
+    sort: str = "discount",
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """
+    Fetch products joined with their watchlist (favourite/owned) state.
+
+    sort: "discount" | "price_asc" | "price_desc" | "title" | "recent"
+    Pass `limit`/`offset` for pagination.
+    """
+    clause, params = _build_filters(
+        only_on_sale=only_on_sale,
+        only_favorites=only_favorites,
+        only_owned=only_owned,
+        exclude_owned=exclude_owned,
+        campaign=campaign,
+        search=search,
+    )
 
     sort_clause = {
         "discount": "p.discount_pct DESC, p.current_price ASC",
@@ -284,10 +325,12 @@ def list_products(
         "COALESCE(w.is_owned, 0) AS is_owned "
         "FROM products p "
         "LEFT JOIN watchlist w ON w.product_id = p.product_id "
+        + clause
+        + f"ORDER BY {sort_clause}"
     )
-    if where:
-        sql += "WHERE " + " AND ".join(where) + " "
-    sql += f"ORDER BY {sort_clause}"
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        params = params + [limit, offset]
 
     with db_session() as conn:
         rows = conn.execute(sql, params).fetchall()

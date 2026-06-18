@@ -14,8 +14,9 @@ with Docker.
 
 ## ✨ Features
 
-- **🌊 Trawler view** — all current 4K deals, with sorting (biggest discount,
-  price, title, recency) and filtering by campaign tag.
+- **🌊 Trawler view** — all current 4K deals, with title **search**,
+  **pagination** (100/page), sorting (biggest discount, price, title, recency)
+  and filtering by campaign tag.
 - **❤️ Watchlist** — favourite any title; the heart toggles instantly via an
   async API call (no page reload).
 - **✓ Collection** — mark titles you already own; they're hidden from the
@@ -135,7 +136,7 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | `POST` | `/api/favorite/{product_id}` | Toggle favourite → `{is_favorited}` |
 | `POST` | `/api/owned/{product_id}` | Toggle owned/collection → `{is_owned}` |
 | `GET`  | `/owned` | Collection view (HTML) |
-| `GET`  | `/api/products` | JSON list (`sort`, `campaign`, `on_sale`, `favorites`, `owned`, `exclude_owned`) |
+| `GET`  | `/api/products` | JSON list (`sort`, `campaign`, `on_sale`, `favorites`, `owned`, `exclude_owned`, `search`, `limit`, `offset`) |
 | `GET`  | `/api/products/{id}/history` | Price history |
 | `POST` | `/api/scrape` | Trigger a scrape now |
 | `POST` | `/api/test-notification` | Send a test alert |

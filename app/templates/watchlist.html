@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_card.html" import product_card %}
+{% from "_pagination.html" import pager, summary %}
 
 {% block title %}Watchlist · 4K Discovery{% endblock %}
 
@@ -12,7 +13,13 @@
         </p>
     </div>
 
-    <form method="get" action="/watchlist">
+    <form method="get" action="/watchlist" class="flex items-end gap-3">
+        <label class="flex flex-col gap-1 text-xs text-slate-400">
+            Search title
+            <input type="search" name="q" value="{{ q }}" placeholder="Title…"
+                   class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100
+                          placeholder:text-slate-500 focus:border-brand focus:outline-none" />
+        </label>
         <label class="flex flex-col gap-1 text-xs text-slate-400">
             Sort by
             <select name="sort" onchange="this.form.submit()"
@@ -26,12 +33,16 @@
     </form>
 </div>
 
+{{ summary(pg, products|length) }}
+
 {% if products %}
-<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+<div class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
     {% for p in products %}
         {{ product_card(p) }}
     {% endfor %}
 </div>
+
+{{ pager(pg, base_query) }}
 {% else %}
 <div class="rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 p-12 text-center">
     <p class="text-4xl">🤍</p>
