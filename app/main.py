@@ -156,6 +156,7 @@ def watchlist(
     products = db.list_products(
         **filters, sort=sort, limit=pg["per_page"], offset=pg["offset"]
     )
+    _attach_imusic(products)  # show "cheaper at iMusic" badges here too
     return templates.TemplateResponse(
         "watchlist.html",
         {
