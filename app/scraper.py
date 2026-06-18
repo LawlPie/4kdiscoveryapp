@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import Any
 from urllib.parse import urlencode
@@ -150,11 +151,11 @@ def _parse_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
     product_id = str(hit.get("objectID") or hit.get("sku") or hit.get("product_id") or url)
 
     # Edition grouping: Platekompaniet's product_family ties variants (steelbook,
-    # imports, limited editions) of the same release together. Fall back to a
-    # per-item group when the family is missing (~10% of titles).
+    # imports, limited editions) of the same release together. The final
+    # group_key is assigned in a post-pass (_assign_group_keys) which adds a
+    # title-based fallback for the ~10% of titles that lack a family.
     family = hit.get("product_family")
     family = str(family) if family else None
-    group_key = f"fam:{family}" if family else f"id:{product_id}"
     edition = (hit.get("edition") or "").strip() or None
 
     return {
@@ -170,8 +171,64 @@ def _parse_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
         "stock_status": hit.get("stock_status") or hit.get("custom_stock_status_plp"),
         "product_family": family,
         "edition": edition,
-        "group_key": group_key,
+        "group_key": f"fam:{family}" if family else f"id:{product_id}",
     }
+
+
+# Noise stripped from titles before deriving a fallback grouping key. We keep
+# the year (so remakes stay separate) and Norwegian letters.
+_TITLE_NOISE = re.compile(
+    r"\b(4k ultra hd|ultra hd|blu-?ray|dvd|steelbook|"
+    r"the criterion collection|criterion|anniversary edition|limited edition|"
+    r"special edition|collector'?s edition|edition|uk import|usa? import|import)\b",
+    re.IGNORECASE,
+)
+_NON_KEY = re.compile(r"[^a-z0-9æøå ]")
+
+
+def _norm_title(title: str) -> str:
+    """
+    Conservative title normalisation used as a fallback grouping key.
+
+    Punctuation (incl. brackets) becomes spaces, but digits are kept — so the
+    film year in "The Mummy (1999)" survives and keeps remakes ("(2017)")
+    separate. We only strip format/edition noise, never the year.
+    """
+    t = (title or "").lower()
+    t = _TITLE_NOISE.sub(" ", t)
+    t = _NON_KEY.sub(" ", t)   # "(2008)" -> " 2008 " (year preserved)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _assign_group_keys(items: dict[str, dict[str, Any]]) -> None:
+    """
+    Finalise each item's group_key.
+
+    Items with a product_family use `fam:<id>` (authoritative). For items
+    *without* a family, fall back to the title: if exactly one family shares the
+    same normalised title, attach to it; otherwise group such items together by
+    title. Ambiguous titles (matching >1 family) never merge — keeping it safe.
+    """
+    title_to_families: dict[str, set[str]] = {}
+    for it in items.values():
+        if it.get("product_family"):
+            title_to_families.setdefault(_norm_title(it["title"]), set()).add(
+                it["product_family"]
+            )
+
+    for it in items.values():
+        fam = it.get("product_family")
+        if fam:
+            it["group_key"] = f"fam:{fam}"
+            continue
+        norm = _norm_title(it["title"])
+        families = title_to_families.get(norm)
+        if families and len(families) == 1:
+            it["group_key"] = f"fam:{next(iter(families))}"
+        elif norm:
+            it["group_key"] = f"title:{norm}"
+        else:
+            it["group_key"] = f"id:{it['product_id']}"
 
 
 # --------------------------------------------------------------------------- #
@@ -277,6 +334,9 @@ def run_scrape() -> dict[str, Any]:
             items, queries = _crawl_full(client)
         else:
             items, queries = _crawl_capped(client)
+
+    # Assign final grouping keys (with title-based fallback) across all items.
+    _assign_group_keys(items)
 
     summary = _persist(list(items.values()))
     summary["duration_seconds"] = round(time.time() - start, 1)
