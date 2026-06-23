@@ -16,11 +16,34 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Iterable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 from .config import settings
+
+
+# --------------------------------------------------------------------------- #
+# Tiny TTL cache for cheap-but-frequent lookups (stats, campaign tags) that run
+# on every page load and only change when a scrape writes new data.
+# --------------------------------------------------------------------------- #
+_cache: dict[str, tuple[float, Any]] = {}
+
+
+def _cached(key: str, ttl: float, producer: Callable[[], Any]) -> Any:
+    now = time.monotonic()
+    hit = _cache.get(key)
+    if hit is not None and now - hit[0] < ttl:
+        return hit[1]
+    value = producer()
+    _cache[key] = (now, value)
+    return value
+
+
+def invalidate_cache() -> None:
+    """Drop cached lookups (called after a scrape so the UI reflects new data)."""
+    _cache.clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -33,6 +56,12 @@ def get_connection() -> sqlite3.Connection:
     # WAL gives us concurrent reads while the scraper writes.
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
+    # Read/write speed tuning (safe with WAL): less fsync, in-memory temp tables,
+    # a larger page cache and memory-mapped I/O.
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA temp_store=MEMORY;")
+    conn.execute("PRAGMA cache_size=-16000;")   # ~16 MB page cache
+    conn.execute("PRAGMA mmap_size=134217728;")  # 128 MB memory-mapped reads
     return conn
 
 
@@ -93,6 +122,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
     product_id      TEXT PRIMARY KEY,
     is_favorited    INTEGER NOT NULL DEFAULT 0,   -- ❤️ on the wishlist
     is_owned        INTEGER NOT NULL DEFAULT 0,   -- ✓ already in my collection
+    last_notified_price REAL,                     -- price of the last alert sent
     created_at      TEXT NOT NULL,
     FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE CASCADE
 );
@@ -119,6 +149,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE watchlist ADD COLUMN is_owned INTEGER NOT NULL DEFAULT 0"
         )
+    # Price at which we last notified for this watched item (alert de-duplication).
+    if "last_notified_price" not in wl_cols:
+        conn.execute("ALTER TABLE watchlist ADD COLUMN last_notified_price REAL")
 
     # Add edition-grouping columns to products (cheapest-of-duplicates feature).
     p_cols = {row["name"] for row in conn.execute("PRAGMA table_info(products)")}
@@ -140,6 +173,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_products_group ON products(group_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_products_ean ON products(ean)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_products_retailer ON products(retailer)")
+    # Composite index for the iMusic price-comparison join (retailer + ean).
+    # Without it the join scans all iMusic rows per product (~6s page loads).
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_products_retailer_ean "
+        "ON products(retailer, ean)"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -496,20 +535,42 @@ def get_price_history(product_id: str) -> list[dict[str, Any]]:
 
 
 def list_campaign_tags() -> list[str]:
-    """Return the distinct set of campaign tags currently in the catalogue."""
-    tags: set[str] = set()
+    """Distinct campaign tags in the catalogue (cached — full scan otherwise)."""
+    def _compute() -> list[str]:
+        tags: set[str] = set()
+        with db_session() as conn:
+            rows = conn.execute(
+                "SELECT campaign_tags FROM products "
+                "WHERE campaign_tags != '[]' AND retailer = 'platekompaniet'"
+            ).fetchall()
+        for r in rows:
+            try:
+                for t in json.loads(r["campaign_tags"] or "[]"):
+                    if t:
+                        tags.add(t)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return sorted(tags)
+
+    return _cached("campaign_tags", ttl=300.0, producer=_compute)
+
+
+def get_favorites_alert_state() -> dict[str, float | None]:
+    """Map favourited product_id -> the price we last alerted at (or None)."""
     with db_session() as conn:
         rows = conn.execute(
-            "SELECT campaign_tags FROM products WHERE campaign_tags != '[]'"
+            "SELECT product_id, last_notified_price FROM watchlist "
+            "WHERE is_favorited = 1"
         ).fetchall()
-    for r in rows:
-        try:
-            for t in json.loads(r["campaign_tags"] or "[]"):
-                if t:
-                    tags.add(t)
-        except (json.JSONDecodeError, TypeError):
-            continue
-    return sorted(tags)
+    return {r["product_id"]: r["last_notified_price"] for r in rows}
+
+
+def record_notified_price(conn: sqlite3.Connection, product_id: str, price: float) -> None:
+    """Remember the price we just alerted at, to avoid repeat notifications."""
+    conn.execute(
+        "UPDATE watchlist SET last_notified_price = ? WHERE product_id = ?",
+        (price, product_id),
+    )
 
 
 def get_favorite_ids() -> set[str]:
@@ -590,7 +651,11 @@ def toggle_owned(product_id: str) -> bool:
 
 
 def get_stats() -> dict[str, Any]:
-    """Small dashboard summary used in the header."""
+    """Small dashboard summary used in the header (cached briefly)."""
+    return _cached("stats", ttl=30.0, producer=_compute_stats)
+
+
+def _compute_stats() -> dict[str, Any]:
     with db_session() as conn:
         total = conn.execute(
             "SELECT COUNT(*) AS c FROM products WHERE retailer = 'platekompaniet'"

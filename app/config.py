@@ -122,8 +122,11 @@ class Settings:
     DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
-    # Only notify when a watched item drops by at least this fraction (0.0 = any).
+    # Only notify when a watched item is discounted by at least this fraction off
+    # its original price (0.0 = any discount).
     NOTIFY_MIN_DROP_PCT: float = _get_float("NOTIFY_MIN_DROP_PCT", 0.0)
+    # Safety cap on alerts per scrape, so a big watchlist can't flood the webhook.
+    NOTIFY_MAX_PER_RUN: int = _get_int("NOTIFY_MAX_PER_RUN", 25)
 
     # ----- Web server ----------------------------------------------------
     HOST: str = os.getenv("HOST", "0.0.0.0")

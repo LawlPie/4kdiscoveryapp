@@ -29,27 +29,23 @@ def _format_nok(value: float | None) -> str:
     return f"{whole} kr"
 
 
-def _build_message(change: dict[str, Any]) -> dict[str, str]:
-    """Produce title/description/url strings shared by both providers."""
-    product = change["product"]
+def _build_message(product: dict[str, Any]) -> dict[str, str]:
+    """Produce title/description/url strings for a discounted watched product."""
     title = product["title"]
     url = product["url"]
-    old_price = change["old_price"]
-    new_price = change["new_price"]
+    current = product.get("current_price")
+    original = product.get("original_price")
 
     lines: list[str] = []
-    if old_price and new_price and new_price < old_price:
-        saved = old_price - new_price
-        pct = (saved / old_price) * 100 if old_price else 0
+    if original and current and current < original:
+        saved = original - current
+        pct = (saved / original) * 100 if original else 0
         lines.append(
-            f"💰 **Price drop:** {_format_nok(old_price)} → "
-            f"**{_format_nok(new_price)}**  (-{pct:.0f}%, save {_format_nok(saved)})"
+            f"💰 **{_format_nok(current)}**  "
+            f"(was {_format_nok(original)}, −{pct:.0f}%, save {_format_nok(saved)})"
         )
-    elif new_price is not None:
-        lines.append(f"💰 Price: **{_format_nok(new_price)}**")
-
-    if (not change["old_on_sale"]) and change["new_on_sale"]:
-        lines.append("🎉 **New campaign is now active!**")
+    elif current is not None:
+        lines.append(f"💰 **{_format_nok(current)}**")
 
     tags = product.get("campaign_tags") or []
     if tags:
@@ -60,7 +56,7 @@ def _build_message(change: dict[str, Any]) -> dict[str, str]:
 
     return {
         "title": f"📀 {title}",
-        "description": "\n".join(lines) or "Updated.",
+        "description": "\n".join(lines) or "On sale.",
         "url": url,
         "image": product.get("image_url") or "",
     }
@@ -109,16 +105,16 @@ def _send_telegram(msg: dict[str, str]) -> None:
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
-def notify_price_change(change: dict[str, Any]) -> bool:
+def notify_deal(product: dict[str, Any]) -> bool:
     """
-    Send a rich notification about a favourited product's improvement.
+    Send a rich notification that a favourited product is on sale / cheaper.
     Returns True if a message was dispatched.
     """
     if not settings.notifications_enabled:
-        logger.debug("Notifications disabled; skipping %s", change["product"]["title"])
+        logger.debug("Notifications disabled; skipping %s", product.get("title"))
         return False
 
-    msg = _build_message(change)
+    msg = _build_message(product)
     if settings.discord_enabled:
         _send_discord(msg)
         return True
@@ -130,17 +126,14 @@ def notify_price_change(change: dict[str, Any]) -> bool:
 
 def send_test_notification() -> bool:
     """Fire a dummy notification so users can verify their webhook config."""
-    fake_change = {
-        "old_price": 299.0,
-        "new_price": 199.0,
-        "old_on_sale": False,
-        "new_on_sale": True,
-        "product": {
-            "title": "Test Movie (4K Ultra HD)",
-            "url": settings.SITE_ROOT,
-            "image_url": "",
-            "campaign_tags": ["Kjøp 2, få 30%"],
-            "stock_status": "På lager",
-        },
+    fake_product = {
+        "title": "Test Movie (4K Ultra HD)",
+        "url": settings.SITE_ROOT,
+        "image_url": "",
+        "current_price": 199.0,
+        "original_price": 299.0,
+        "discount_pct": 33.4,
+        "campaign_tags": ["Kjøp 2, få 30%"],
+        "stock_status": "På lager",
     }
-    return notify_price_change(fake_change)
+    return notify_deal(fake_product)

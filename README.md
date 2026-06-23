@@ -132,7 +132,8 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | `ALGOLIA_4K_FILTER` | `format_media:4K Ultra HD` | Facet filter isolating 4K releases |
 | `DISCORD_WEBHOOK_URL` | — | Enable Discord notifications |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — | Enable Telegram notifications |
-| `NOTIFY_MIN_DROP_PCT` | `0.0` | Min fractional price drop to alert (e.g. `0.1` = 10%) |
+| `NOTIFY_MIN_DROP_PCT` | `0.0` | Min discount off the original to alert (e.g. `0.1` = 10%) |
+| `NOTIFY_MAX_PER_RUN` | `25` | Cap on alerts sent per scrape (flood protection) |
 | `DB_PATH` | `data/deals.db` | SQLite file location |
 
 ---

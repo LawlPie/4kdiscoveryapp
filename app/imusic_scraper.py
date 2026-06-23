@@ -24,7 +24,7 @@ from bs4 import BeautifulSoup
 from curl_cffi import requests as cffi_requests
 
 from .config import settings
-from .database import db_session, upsert_product
+from .database import db_session, invalidate_cache, upsert_product
 
 logger = logging.getLogger("imusic")
 
@@ -176,6 +176,7 @@ def run_imusic_scrape() -> dict[str, Any]:
             result = upsert_product(conn, it)
             if result["is_new"]:
                 new_count += 1
+    invalidate_cache()  # refresh cached stats so the iMusic count updates
 
     summary = {
         "total": len(items),

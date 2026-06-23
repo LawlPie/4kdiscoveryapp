@@ -25,8 +25,15 @@ from urllib.parse import urlencode
 import httpx
 
 from .config import settings
-from .database import db_session, get_favorite_ids, get_owned_ids, upsert_product
-from .notifications import notify_price_change
+from .database import (
+    db_session,
+    get_favorites_alert_state,
+    get_owned_ids,
+    invalidate_cache,
+    record_notified_price,
+    upsert_product,
+)
+from .notifications import notify_deal
 
 logger = logging.getLogger("scraper")
 
@@ -356,13 +363,15 @@ def run_scrape() -> dict[str, Any]:
 
 
 def _persist(items: list[dict[str, Any]]) -> dict[str, Any]:
-    """Upsert all items in one transaction and dispatch notifications."""
-    favorites = get_favorite_ids()
+    """Upsert all items in one transaction and dispatch deal notifications."""
+    fav_alert = get_favorites_alert_state()  # favourited id -> last alerted price
     owned = get_owned_ids()
     new_count = 0
     skipped = 0
-    notified = 0
-    changes: list[dict[str, Any]] = []
+
+    # Candidate alerts: (product_id, product dict). Collected during the upsert
+    # pass, sent afterwards so a slow webhook never holds the write lock.
+    deals: list[tuple[str, dict[str, Any]]] = []
 
     with db_session() as conn:
         for item in items:
@@ -373,19 +382,14 @@ def _persist(items: list[dict[str, Any]]) -> dict[str, Any]:
             result = upsert_product(conn, item)
             if result["is_new"]:
                 new_count += 1
-            # Decide whether a watched item warrants an alert.
-            if item["product_id"] in favorites and not result["is_new"]:
-                if _is_improvement(result):
-                    changes.append(result)
+            pid = item["product_id"]
+            if pid in fav_alert and not result["is_new"]:
+                product = result["product"]
+                if _is_deal(product, fav_alert[pid]):
+                    deals.append((pid, product))
 
-    # Send notifications outside the DB transaction so a slow webhook does not
-    # hold a write lock on SQLite.
-    for change in changes:
-        try:
-            notify_price_change(change)
-            notified += 1
-        except Exception as exc:
-            logger.warning("Notification failed: %s", exc)
+    notified = _dispatch_deals(deals)
+    invalidate_cache()  # so stats/tag dropdown reflect the fresh scrape
 
     return {
         "total": len(items),
@@ -395,24 +399,58 @@ def _persist(items: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _is_improvement(change: dict[str, Any]) -> bool:
-    """A watched item 'improved' if it got cheaper or entered a campaign."""
-    old_price = change["old_price"]
-    new_price = change["new_price"]
+def _is_deal(product: dict[str, Any], last_notified_price: float | None) -> bool:
+    """
+    True when a watched item is genuinely worth an alert: actually discounted
+    (current below its original price) by at least the configured threshold, and
+    cheaper than the price we last alerted at (or never alerted before). This
+    deliberately ignores campaign-tag churn that doesn't change the price.
+    """
+    current = product.get("current_price")
+    original = product.get("original_price")
+    if current is None or original is None or current >= original:
+        return False
+    if (original - current) / original < settings.NOTIFY_MIN_DROP_PCT:
+        return False
+    if last_notified_price is not None and current >= last_notified_price - 1e-9:
+        return False
+    return True
 
-    entered_campaign = (not change["old_on_sale"]) and change["new_on_sale"]
 
-    dropped = (
-        old_price is not None
-        and new_price is not None
-        and new_price < old_price
-    )
-    if dropped:
-        drop_pct = (old_price - new_price) / old_price if old_price else 0
-        if drop_pct < settings.NOTIFY_MIN_DROP_PCT:
-            dropped = False
+def _dispatch_deals(deals: list[tuple[str, dict[str, Any]]]) -> int:
+    """
+    Send up to NOTIFY_MAX_PER_RUN alerts (biggest discount first). Every deal —
+    even those over the cap — records its price so we don't re-alert next run.
+    """
+    if not deals:
+        return 0
 
-    return bool(dropped or entered_campaign)
+    def discount(p: dict[str, Any]) -> float:
+        o, c = p.get("original_price"), p.get("current_price")
+        return (o - c) / o if o and c else 0.0
+
+    deals.sort(key=lambda d: discount(d[1]), reverse=True)
+    cap = settings.NOTIFY_MAX_PER_RUN
+    notified = 0
+    sent_prices: dict[str, float] = {}
+
+    for idx, (pid, product) in enumerate(deals):
+        price = product["current_price"]
+        if idx < cap:
+            try:
+                if notify_deal(product):
+                    notified += 1
+            except Exception as exc:
+                logger.warning("Notification failed for %s: %s", pid, exc)
+        sent_prices[pid] = price  # record regardless, to avoid repeat alerts
+
+    if len(deals) > cap:
+        logger.info("Suppressed %s extra alerts (cap %s)", len(deals) - cap, cap)
+
+    with db_session() as conn:
+        for pid, price in sent_prices.items():
+            record_notified_price(conn, pid, price)
+    return notified
 
 
 if __name__ == "__main__":
