@@ -45,7 +45,36 @@ BOUTIQUE_LABELS: dict[str, str] = {
     "Umbrella Entertainment": "AUS",
 }
 
-_REGION_FLAG = {"UK": "🇬🇧", "US": "🇺🇸", "AUS": "🇦🇺"}
+_REGION_FLAG = {"UK": "🇬🇧", "US": "🇺🇸", "AUS": "🇦🇺", "EU": "🇪🇺"}
+
+# Criterion's official US barcode prefix (UPC company prefix) — identifies the
+# canonical US Criterion 4K spine reliably, regardless of how it's tagged.
+CRITERION_US_PREFIX = ("715515", "0715515")
+
+
+def region_from_ean(ean: str | None) -> str | None:
+    """
+    Infer the release region from a barcode's GS1 prefix. Good enough to tell a
+    US import from a UK edition — the distinction a Norwegian buyer cares about.
+    """
+    if not ean:
+        return None
+    e = str(ean).strip()
+    if e.startswith(CRITERION_US_PREFIX):
+        return "US"
+    if e[:1] in ("0", "1"):            # UPC, US/Canada
+        return "US"
+    if e[:2] == "50":                  # 500-509 = UK
+        return "UK"
+    if e[:2] in ("30", "31", "32", "33", "34", "35", "36", "37",  # France
+                 "40", "41", "42", "43", "44",                      # Germany
+                 "54", "57", "73", "76"):                           # BE, DK, SE, CH
+        return "EU"
+    return None
+
+
+def is_us_criterion_ean(ean: str | None) -> bool:
+    return bool(ean) and str(ean).strip().startswith(CRITERION_US_PREFIX)
 
 
 def boutique_labels_in(labels: list[str]) -> list[str]:

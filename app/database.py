@@ -22,7 +22,13 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Iterator
 
 from .config import settings
-from .labels import CRITERION, boutique_labels_in, region_of
+from .labels import (
+    CRITERION,
+    boutique_labels_in,
+    is_us_criterion_ean,
+    region_from_ean,
+    region_of,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -519,24 +525,37 @@ def _better_rep(new: dict[str, Any], cur: dict[str, Any]) -> bool:
     return np < cp
 
 
+def _alt_label(d: dict[str, Any], region: str | None) -> str:
+    """Human label for an alternative edition (e.g. 'Criterion (UK)', 'Arrow Films')."""
+    boutique = boutique_labels_in(d["labels"])
+    if CRITERION in boutique:
+        return f"Criterion ({region})" if region else "Criterion"
+    if boutique:
+        return boutique[0]
+    return f"{region} edition" if region else "Other edition"
+
+
 def get_criterion_releases() -> list[dict[str, Any]]:
     """
-    One entry per Criterion Collection 4K *film* (deduped across editions), each
-    annotated with `alternatives` — same-film 4K editions from other boutique
-    labels (Arrow, Second Sight, …) — and `has_uk_alt`.
+    One entry per Criterion Collection 4K *film*, identified by Criterion's
+    official US barcode prefix (the authoritative spine, regardless of tagging).
+    Each is annotated with `alternatives` — same-film 4K editions that are UK
+    (incl. a UK Criterion pressing) or from another boutique label — sorted so a
+    UK edition (the prioritised, usually cheaper option for a Norwegian buyer)
+    comes first, plus `has_uk_alt` / `uk_alt` for the headline badge.
     """
     with db_session() as conn:
         crit_rows = conn.execute(
             "SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited, "
             "COALESCE(w.is_owned, 0) AS is_owned "
             "FROM products p LEFT JOIN watchlist w ON w.product_id = p.product_id "
-            "WHERE p.retailer = 'platekompaniet' AND p.labels LIKE ? "
+            "WHERE p.retailer = 'platekompaniet' "
+            "AND (p.ean LIKE '715515%' OR p.ean LIKE '0715515%') "
             "ORDER BY p.title COLLATE NOCASE ASC",
-            (f"%{CRITERION}%",),
         ).fetchall()
     criterion = [_row_to_product(r) for r in crit_rows]
 
-    # Collapse multiple Criterion editions of the same film into one poster.
+    # Collapse multiple US Criterion editions of the same film into one poster.
     films: dict[str, dict[str, Any]] = {}
     owned_film: dict[str, bool] = {}
     for p in criterion:
@@ -545,6 +564,7 @@ def get_criterion_releases() -> list[dict[str, Any]]:
         if key not in films or _better_rep(p, films[key]):
             films[key] = p
 
+    crit_ids = {p["product_id"] for p in criterion}
     norms = [k for k in films if k]
     alt_map: dict[str, list[dict[str, Any]]] = {}
     if norms:
@@ -557,37 +577,51 @@ def get_criterion_releases() -> list[dict[str, Any]]:
                 f"({placeholders})",
                 norms,
             ).fetchall()
-        # Per film, keep one entry per alternative label (the cheapest edition).
-        by_title_label: dict[str, dict[str, dict[str, Any]]] = {}
+        # Keep one alternative per (label, region) — the cheapest edition.
+        by_title_key: dict[str, dict[tuple, dict[str, Any]]] = {}
         for r in alt_rows:
             d = _row_to_product(r)
-            # Boutique labels other than Criterion = an alternative release.
-            others = [lbl for lbl in boutique_labels_in(d["labels"]) if lbl != CRITERION]
-            if not others:
+            if d["product_id"] in crit_ids and is_us_criterion_ean(d["ean"]):
+                continue  # the US Criterion edition itself, not an alternative
+            region = region_from_ean(d["ean"])
+            # Surface UK editions (incl. a UK Criterion pressing) and any
+            # boutique-label release — these are the meaningful alternatives.
+            if region not in ("UK", "EU") and not boutique_labels_in(d["labels"]):
                 continue
-            label = others[0]
+            label = _alt_label(d, region)
             entry = {
                 "label": label,
-                "region": region_of(label),
+                "region": region,
                 "title": d["title"],
                 "url": d["url"],
                 "product_id": d["product_id"],
                 "current_price": d["current_price"],
+                "is_criterion_uk": CRITERION in boutique_labels_in(d["labels"]),
             }
-            labels_for_title = by_title_label.setdefault(d["norm_title"], {})
-            existing = labels_for_title.get(label)
-            cur, exi = d["current_price"], existing["current_price"] if existing else None
-            if existing is None or (cur is not None and (exi is None or cur < exi)):
-                labels_for_title[label] = entry
-        alt_map = {t: list(v.values()) for t, v in by_title_label.items()}
+            bucket = by_title_key.setdefault(d["norm_title"], {})
+            k = (label, region)
+            cur = d["current_price"]
+            exi = bucket[k]["current_price"] if k in bucket else None
+            if k not in bucket or (cur is not None and (exi is None or cur < exi)):
+                bucket[k] = entry
+        alt_map = {t: list(v.values()) for t, v in by_title_key.items()}
+
+    def alt_sort_key(a: dict[str, Any]) -> tuple:
+        # UK first; a UK Criterion pressing ahead of UK boutique; then cheapest.
+        return (
+            a["region"] != "UK",
+            not a["is_criterion_uk"],
+            a["current_price"] if a["current_price"] is not None else 1e9,
+        )
 
     result = list(films.values())
     for p in result:
         key = p.get("norm_title") or p["product_id"]
-        alts = alt_map.get(key, [])
-        alts.sort(key=lambda a: (a["region"] != "UK", a["label"]))  # UK first
+        alts = sorted(alt_map.get(key, []), key=alt_sort_key)
         p["alternatives"] = alts
-        p["has_uk_alt"] = any(a["region"] == "UK" for a in alts)
+        uk_alts = [a for a in alts if a["region"] == "UK"]
+        p["has_uk_alt"] = bool(uk_alts)
+        p["uk_alt"] = uk_alts[0] if uk_alts else None
         p["is_owned"] = owned_film.get(key, p["is_owned"])
     result.sort(key=lambda p: p["title"].lower())
     return result
