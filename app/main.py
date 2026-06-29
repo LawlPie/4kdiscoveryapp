@@ -66,6 +66,28 @@ def _format_nok(value):
 templates.env.filters["nok"] = _format_nok
 
 
+def _asset_version() -> str:
+    """
+    Content hash of the JS/CSS, appended to their URLs as ?v=… so browsers fetch
+    the new files after every deploy instead of serving a stale cached copy
+    (which previously left click handlers like toggleCollected undefined).
+    """
+    import hashlib
+
+    h = hashlib.md5()
+    static_dir = BASE_DIR / "app" / "static"
+    for name in ("app.js", "app.css"):
+        try:
+            h.update((static_dir / name).read_bytes())
+        except OSError:
+            pass
+    return h.hexdigest()[:10]
+
+
+# Recomputed at import (i.e. per container start / deploy).
+templates.env.globals["asset_version"] = _asset_version()
+
+
 def _paginate(total: int, page: int) -> dict[str, int]:
     """Clamp the page and compute offset/total_pages for `total` rows."""
     per_page = settings.PAGE_SIZE

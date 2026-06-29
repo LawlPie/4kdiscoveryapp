@@ -19,7 +19,7 @@
             },
         };
     </script>
-    <link rel="stylesheet" href="/static/app.css" />
+    <link rel="stylesheet" href="/static/app.css?v={{ asset_version }}" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
 </head>
 <body class="h-full bg-slate-950 text-slate-100 antialiased">
@@ -96,7 +96,7 @@
         4K Discovery · unofficial Platekompaniet deal tracker · self-hosted
     </footer>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v={{ asset_version }}"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

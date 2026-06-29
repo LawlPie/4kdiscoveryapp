@@ -121,7 +121,8 @@ async function toggleOwned(productId, btn) {
 
 /**
  * Toggle a Criterion poster's "collected" state (reuses the owned flag). The
- * poster stays in place and just gets a dim + check overlay — it's a checklist.
+ * card stays in place; CSS lifts it forward and adds an emerald glow + ✓ via
+ * the data-collected attribute on the #crit-<id> article.
  */
 async function toggleCollected(productId, btn) {
     btn.disabled = true;
