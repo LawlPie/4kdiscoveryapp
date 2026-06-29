@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Iterator
 
 from .config import settings
+from .labels import CRITERION, boutique_labels_in, region_of
 
 
 # --------------------------------------------------------------------------- #
@@ -104,6 +105,8 @@ CREATE TABLE IF NOT EXISTS products (
     group_key       TEXT,                      -- grouping key (fam:<id> or id:<id>)
     retailer        TEXT NOT NULL DEFAULT 'platekompaniet',  -- source store
     ean             TEXT,                      -- barcode, used to match across retailers
+    labels          TEXT DEFAULT '[]',         -- JSON list of releasing labels (Criterion, Arrow…)
+    norm_title      TEXT,                      -- normalised title, for cross-label film matching
     first_seen      TEXT NOT NULL,
     last_seen       TEXT NOT NULL,
     updated_at      TEXT NOT NULL
@@ -155,9 +158,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
     # Add edition-grouping columns to products (cheapest-of-duplicates feature).
     p_cols = {row["name"] for row in conn.execute("PRAGMA table_info(products)")}
-    for col in ("product_family", "edition", "group_key", "ean"):
+    for col in ("product_family", "edition", "group_key", "ean", "norm_title"):
         if col not in p_cols:
             conn.execute(f"ALTER TABLE products ADD COLUMN {col} TEXT")
+    # Releasing-label list (Criterion view / boutique alternatives).
+    if "labels" not in p_cols:
+        conn.execute("ALTER TABLE products ADD COLUMN labels TEXT DEFAULT '[]'")
     # Multi-retailer support (iMusic price comparison).
     if "retailer" not in p_cols:
         conn.execute(
@@ -179,6 +185,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_products_retailer_ean "
         "ON products(retailer, ean)"
     )
+    # Cross-label film matching for the Criterion collector view.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_products_norm_title ON products(norm_title)")
 
 
 # --------------------------------------------------------------------------- #
@@ -194,6 +202,10 @@ def _row_to_product(row: sqlite3.Row) -> dict[str, Any]:
         data["campaign_tags"] = []
     data["is_favorited"] = bool(data.get("is_favorited"))
     data["is_owned"] = bool(data.get("is_owned"))
+    try:
+        data["labels"] = json.loads(data.get("labels") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        data["labels"] = []
     return data
 
 
@@ -226,6 +238,8 @@ def upsert_product(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, 
     edition = item.get("edition")
     retailer = item.get("retailer", "platekompaniet")
     ean = item.get("ean")
+    labels_json = json.dumps(item.get("labels", []), ensure_ascii=False)
+    norm_title = item.get("norm_title")
     # Group editions of the same release together; fall back to a per-item group.
     group_key = item.get("group_key") or (
         f"fam:{family}" if family else f"id:{item['product_id']}"
@@ -242,13 +256,15 @@ def upsert_product(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, 
                 product_id, title, url, image_url, current_price, original_price,
                 discount_pct, on_sale, campaign_tags, stock_status,
                 product_family, edition, group_key, retailer, ean,
+                labels, norm_title,
                 first_seen, last_seen, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item["product_id"], item["title"], item["url"], item.get("image_url"),
                 current_price, original_price, discount_pct, on_sale, tags_json,
                 item.get("stock_status"), family, edition, group_key, retailer, ean,
+                labels_json, norm_title,
                 now, now, now,
             ),
         )
@@ -274,6 +290,7 @@ def upsert_product(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, 
             title = ?, url = ?, image_url = ?, current_price = ?, original_price = ?,
             discount_pct = ?, on_sale = ?, campaign_tags = ?, stock_status = ?,
             product_family = ?, edition = ?, group_key = ?, retailer = ?, ean = ?,
+            labels = ?, norm_title = ?,
             last_seen = ?, updated_at = ?
         WHERE product_id = ?
         """,
@@ -281,6 +298,7 @@ def upsert_product(conn: sqlite3.Connection, item: dict[str, Any]) -> dict[str, 
             item["title"], item["url"], item.get("image_url"), current_price,
             original_price, discount_pct, on_sale, tags_json,
             item.get("stock_status"), family, edition, group_key, retailer, ean,
+            labels_json, norm_title,
             now, now, item["product_id"],
         ),
     )
@@ -486,6 +504,93 @@ def get_group_variants(group_key: str) -> list[dict[str, Any]]:
     with db_session() as conn:
         rows = conn.execute(sql, (group_key,)).fetchall()
     return [_row_to_product(r) for r in rows]
+
+
+def _better_rep(new: dict[str, Any], cur: dict[str, Any]) -> bool:
+    """Prefer a representative edition that has cover art, then the cheaper one."""
+    ni, ci = bool(new.get("image_url")), bool(cur.get("image_url"))
+    if ni != ci:
+        return ni and not ci
+    np, cp = new.get("current_price"), cur.get("current_price")
+    if np is None:
+        return False
+    if cp is None:
+        return True
+    return np < cp
+
+
+def get_criterion_releases() -> list[dict[str, Any]]:
+    """
+    One entry per Criterion Collection 4K *film* (deduped across editions), each
+    annotated with `alternatives` — same-film 4K editions from other boutique
+    labels (Arrow, Second Sight, …) — and `has_uk_alt`.
+    """
+    with db_session() as conn:
+        crit_rows = conn.execute(
+            "SELECT p.*, COALESCE(w.is_favorited, 0) AS is_favorited, "
+            "COALESCE(w.is_owned, 0) AS is_owned "
+            "FROM products p LEFT JOIN watchlist w ON w.product_id = p.product_id "
+            "WHERE p.retailer = 'platekompaniet' AND p.labels LIKE ? "
+            "ORDER BY p.title COLLATE NOCASE ASC",
+            (f"%{CRITERION}%",),
+        ).fetchall()
+    criterion = [_row_to_product(r) for r in crit_rows]
+
+    # Collapse multiple Criterion editions of the same film into one poster.
+    films: dict[str, dict[str, Any]] = {}
+    owned_film: dict[str, bool] = {}
+    for p in criterion:
+        key = p.get("norm_title") or p["product_id"]
+        owned_film[key] = owned_film.get(key, False) or p["is_owned"]
+        if key not in films or _better_rep(p, films[key]):
+            films[key] = p
+
+    norms = [k for k in films if k]
+    alt_map: dict[str, list[dict[str, Any]]] = {}
+    if norms:
+        placeholders = ",".join("?" * len(norms))
+        with db_session() as conn:
+            alt_rows = conn.execute(
+                "SELECT product_id, title, url, current_price, image_url, labels, "
+                "norm_title, ean FROM products "
+                "WHERE retailer = 'platekompaniet' AND norm_title IN "
+                f"({placeholders})",
+                norms,
+            ).fetchall()
+        # Per film, keep one entry per alternative label (the cheapest edition).
+        by_title_label: dict[str, dict[str, dict[str, Any]]] = {}
+        for r in alt_rows:
+            d = _row_to_product(r)
+            # Boutique labels other than Criterion = an alternative release.
+            others = [lbl for lbl in boutique_labels_in(d["labels"]) if lbl != CRITERION]
+            if not others:
+                continue
+            label = others[0]
+            entry = {
+                "label": label,
+                "region": region_of(label),
+                "title": d["title"],
+                "url": d["url"],
+                "product_id": d["product_id"],
+                "current_price": d["current_price"],
+            }
+            labels_for_title = by_title_label.setdefault(d["norm_title"], {})
+            existing = labels_for_title.get(label)
+            cur, exi = d["current_price"], existing["current_price"] if existing else None
+            if existing is None or (cur is not None and (exi is None or cur < exi)):
+                labels_for_title[label] = entry
+        alt_map = {t: list(v.values()) for t, v in by_title_label.items()}
+
+    result = list(films.values())
+    for p in result:
+        key = p.get("norm_title") or p["product_id"]
+        alts = alt_map.get(key, [])
+        alts.sort(key=lambda a: (a["region"] != "UK", a["label"]))  # UK first
+        p["alternatives"] = alts
+        p["has_uk_alt"] = any(a["region"] == "UK" for a in alts)
+        p["is_owned"] = owned_film.get(key, p["is_owned"])
+    result.sort(key=lambda p: p["title"].lower())
+    return result
 
 
 def get_offers_by_ean(eans: list[str], retailer: str = "imusic") -> dict[str, dict[str, Any]]:

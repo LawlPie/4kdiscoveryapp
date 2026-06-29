@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% from "_pagination.html" import pager, summary %}
+
+{% block title %}Criterion · 4K Discovery{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex flex-col gap-4">
+    <div>
+        <h1 class="text-2xl font-bold tracking-tight">🎞️ Criterion Collection — 4K</h1>
+        <p class="text-sm text-slate-400">
+            Every Criterion 4K release. Click a poster to check off what you own.
+            A <span class="font-semibold text-amber-300">🇬🇧 UK badge</span> means a boutique
+            label (Arrow, Second Sight, …) released the same film — a UK alternative
+            to importing from the US.
+        </p>
+        <div class="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400">
+            <span><strong class="text-slate-200">{{ summary.films }}</strong> films</span>
+            <span><strong class="text-emerald-300">{{ summary.collected }}</strong> collected</span>
+            <span><strong class="text-amber-300">{{ summary.with_uk }}</strong> with a UK alternative</span>
+        </div>
+    </div>
+
+    <!-- Search / filter bar -->
+    <form method="get" action="/criterion" class="flex flex-wrap items-end gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+        <label class="flex flex-grow flex-col gap-1 text-xs text-slate-400 sm:max-w-xs">
+            Search title
+            <input type="search" name="q" value="{{ q }}" placeholder="e.g. Mean Streets…"
+                   class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100
+                          placeholder:text-slate-500 focus:border-brand focus:outline-none" />
+        </label>
+        <label class="flex flex-col gap-1 text-xs text-slate-400">
+            Show
+            <select name="show" onchange="this.form.submit()"
+                    class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100">
+                <option value="all"          {{ 'selected' if show == 'all' }}>All releases</option>
+                <option value="uncollected"  {{ 'selected' if show == 'uncollected' }}>Not collected yet</option>
+                <option value="collected"    {{ 'selected' if show == 'collected' }}>Collected</option>
+                <option value="uk"           {{ 'selected' if show == 'uk' }}>Has UK alternative</option>
+            </select>
+        </label>
+        <button type="submit" class="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark">Search</button>
+        <a href="/criterion" class="ml-auto self-center text-xs text-slate-500 hover:text-slate-300">Reset</a>
+    </form>
+
+    {{ summary(pg, films|length) }}
+</div>
+
+{% if films %}
+<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+    {% for f in films %}
+    <article id="crit-{{ f.product_id }}"
+             data-collected="{{ 'true' if f.is_owned else 'false' }}"
+             class="crit-poster group relative flex flex-col overflow-hidden rounded-2xl border
+                    border-slate-800 bg-slate-900 transition hover:border-slate-700">
+
+        <!-- Poster (click = toggle collected) -->
+        <button type="button" onclick="toggleCollected('{{ f.product_id }}', this)"
+                class="relative block aspect-[2/3] w-full overflow-hidden bg-slate-800 text-left">
+            {% if f.image_url %}
+            <img src="{{ f.image_url }}" alt="{{ f.title }}" loading="lazy"
+                 class="poster-img h-full w-full object-cover transition duration-300" />
+            {% else %}
+            <div class="flex h-full w-full items-center justify-center text-4xl text-slate-600">🎞️</div>
+            {% endif %}
+
+            <!-- UK alternative badge -->
+            {% if f.has_uk_alt %}
+            <span class="absolute left-2 top-2 rounded-full bg-amber-400/95 px-2 py-0.5 text-[11px] font-bold text-amber-950">
+                🇬🇧 UK alt
+            </span>
+            {% endif %}
+
+            <!-- Collected overlay (shown when owned) -->
+            <span class="collected-overlay absolute inset-0 flex items-center justify-center
+                         bg-emerald-600/55 text-5xl text-white opacity-0 transition">✓</span>
+        </button>
+
+        <!-- Body -->
+        <div class="flex flex-1 flex-col gap-1.5 p-3">
+            <a href="{{ f.url }}" target="_blank" rel="noopener"
+               class="line-clamp-2 text-sm font-semibold leading-snug text-slate-100 hover:text-brand">
+                {{ f.title }}
+            </a>
+
+            {% if f.alternatives %}
+            <div class="flex flex-wrap gap-1">
+                {% for a in f.alternatives %}
+                <a href="{{ a.url }}" target="_blank" rel="noopener"
+                   title="{{ a.label }} edition of the same film"
+                   class="rounded-full px-2 py-0.5 text-[10px] font-medium
+                          {{ 'bg-amber-400/15 text-amber-300' if a.region == 'UK' else 'bg-slate-700/50 text-slate-300' }}">
+                    {{ '🇬🇧' if a.region == 'UK' else ('🇦🇺' if a.region == 'AUS' else '🏷️') }} {{ a.label }}
+                </a>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </article>
+    {% endfor %}
+</div>
+
+{{ pager(pg, base_query) }}
+{% else %}
+<div class="rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 p-12 text-center">
+    <p class="text-4xl">🎞️</p>
+    <p class="mt-3 text-slate-300">
+        {% if q or show != 'all' %}No Criterion titles match this filter.{% else %}No Criterion 4K releases found yet — run a scrape first.{% endif %}
+    </p>
+    <a href="/criterion" class="mt-1 inline-block text-sm font-semibold text-brand hover:underline">Reset filters</a>
+</div>
+{% endif %}
+{% endblock %}

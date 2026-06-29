@@ -198,6 +198,48 @@ def owned(
     )
 
 
+@app.get("/criterion", response_class=HTMLResponse)
+def criterion(
+    request: Request, q: Optional[str] = None, show: str = "all", page: int = 1
+):
+    """Criterion Collection 4K checklist (poster view) with UK-alternative flags."""
+    search = (q or "").strip().lower() or None
+    all_films = db.get_criterion_releases()
+    summary = {
+        "films": len(all_films),
+        "collected": sum(1 for f in all_films if f["is_owned"]),
+        "with_uk": sum(1 for f in all_films if f["has_uk_alt"]),
+    }
+
+    films = all_films
+    if search:
+        films = [f for f in films if search in f["title"].lower()]
+    if show == "uncollected":
+        films = [f for f in films if not f["is_owned"]]
+    elif show == "collected":
+        films = [f for f in films if f["is_owned"]]
+    elif show == "uk":
+        films = [f for f in films if f["has_uk_alt"]]
+
+    pg = _paginate(len(films), page)
+    page_items = films[pg["offset"]: pg["offset"] + pg["per_page"]]
+
+    return templates.TemplateResponse(
+        "criterion.html",
+        {
+            "request": request,
+            "films": page_items,
+            "summary": summary,
+            "stats": db.get_stats(),
+            "q": search or "",
+            "show": show,
+            "pg": pg,
+            "base_query": _base_query(q=search or "", show=show if show != "all" else ""),
+            "active_view": "criterion",
+        },
+    )
+
+
 @app.get("/movie/{product_id}", response_class=HTMLResponse)
 def movie_detail(request: Request, product_id: str):
     """Detail view: every edition of a release with prices, format flags, stock."""

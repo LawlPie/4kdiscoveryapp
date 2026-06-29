@@ -119,6 +119,30 @@ async function toggleOwned(productId, btn) {
     }
 }
 
+/**
+ * Toggle a Criterion poster's "collected" state (reuses the owned flag). The
+ * poster stays in place and just gets a dim + check overlay — it's a checklist.
+ */
+async function toggleCollected(productId, btn) {
+    btn.disabled = true;
+    try {
+        const resp = await fetch(`/api/owned/${encodeURIComponent(productId)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const art = document.getElementById(`crit-${productId}`);
+        if (art) art.dataset.collected = data.is_owned ? "true" : "false";
+        showToast(data.is_owned ? "Marked as collected ✓" : "Removed from collection");
+    } catch (err) {
+        console.error(err);
+        showToast("Could not update collection", true);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 /** Manually trigger a scrape run from the UI. */
 async function triggerScrape(btn) {
     const original = btn.textContent;

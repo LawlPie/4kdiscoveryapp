@@ -25,6 +25,10 @@ with Docker.
   compared against iMusic; cards flag "cheaper at iMusic" and each movie's detail
   page shows Platekompaniet vs iMusic per edition with the cheaper side
   highlighted. Both retailers price in NOK, so it's a direct comparison.
+- **🎞️ Criterion collector view** — a separate poster-grid tab listing every
+  Criterion Collection 4K, with a **🇬🇧 UK-alternative** flag when a boutique
+  label (Arrow, Second Sight, Powerhouse, …) released the same film. Click a
+  poster to check off what you've collected.
 - **❤️ Watchlist** — favourite any title; the heart toggles instantly via an
   async API call (no page reload).
 - **✓ Collection** — mark titles you already own; they're hidden from the
@@ -145,6 +149,7 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | `GET`  | `/` | Trawler view (HTML) |
 | `GET`  | `/watchlist` | Watchlist view (HTML) |
 | `GET`  | `/movie/{product_id}` | Detail view — all editions of a release (HTML) |
+| `GET`  | `/criterion` | Criterion 4K collector view (HTML) — `q`, `show`, `page` |
 | `POST` | `/api/favorite/{product_id}` | Toggle favourite → `{is_favorited}` |
 | `POST` | `/api/owned/{product_id}` | Toggle owned/collection → `{is_owned}` |
 | `GET`  | `/owned` | Collection view (HTML) |
