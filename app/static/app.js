@@ -134,6 +134,9 @@ async function toggleCollected(productId, btn) {
         const data = await resp.json();
         const art = document.getElementById(`crit-${productId}`);
         if (art) art.dataset.collected = data.is_owned ? "true" : "false";
+        const label = btn.querySelector(".collect-label");
+        if (label) label.textContent = data.is_owned
+            ? "✓ Collected — click to remove" : "Mark as collected";
         showToast(data.is_owned ? "Marked as collected ✓" : "Removed from collection");
     } catch (err) {
         console.error(err);

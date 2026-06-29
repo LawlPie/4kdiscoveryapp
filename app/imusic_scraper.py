@@ -25,6 +25,7 @@ from curl_cffi import requests as cffi_requests
 
 from .config import settings
 from .database import db_session, invalidate_cache, upsert_product
+from .scraper import _match_key, _norm_title
 
 logger = logging.getLogger("imusic")
 
@@ -136,6 +137,9 @@ def _parse_listing(html: str) -> list[dict[str, Any]]:
                 "group_key": f"im:{ean}",
                 "retailer": "imusic",
                 "ean": ean,
+                "labels": [],
+                "norm_title": _norm_title(title),
+                "match_key": _match_key(title),
             }
         )
     return items

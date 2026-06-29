@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}{{ film.title if film else "Not found" }} · Criterion · 4K Discovery{% endblock %}
+
+{% set flags = {'UK': '🇬🇧', 'US': '🇺🇸', 'AUS': '🇦🇺', 'EU': '🇪🇺'} %}
+
+{% block content %}
+<a href="/criterion" class="mb-4 inline-flex items-center gap-1 text-sm text-slate-400 hover:text-slate-200">← Back to Criterion</a>
+
+{% if not film %}
+<div class="rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 p-12 text-center">
+    <p class="text-4xl">🤷</p>
+    <p class="mt-3 text-slate-300">That title is no longer in the database.</p>
+    <a href="/criterion" class="mt-1 inline-block text-sm font-semibold text-brand hover:underline">Back to Criterion</a>
+</div>
+{% else %}
+<div class="flex flex-col gap-6 md:flex-row">
+    <!-- Poster + collect -->
+    <div class="w-full max-w-[220px] shrink-0">
+        <div id="crit-{{ film.product_id }}"
+             class="crit-poster relative aspect-[2/3] overflow-hidden rounded-2xl border border-slate-800 bg-slate-800"
+             data-collected="{{ 'true' if film.is_owned else 'false' }}">
+            {% if film.image_url %}
+            <img src="{{ film.image_url }}" alt="{{ film.title }}" class="poster-img h-full w-full object-cover" />
+            {% else %}
+            <div class="flex h-full w-full items-center justify-center text-5xl text-slate-600">🎞️</div>
+            {% endif %}
+            <span class="collected-overlay absolute inset-0 flex items-center justify-center bg-emerald-600/55 text-5xl text-white opacity-0 transition">✓</span>
+        </div>
+        <button type="button" onclick="toggleCollected('{{ film.product_id }}', this)"
+                class="mt-3 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-700">
+            <span class="collect-label">{{ '✓ Collected — click to remove' if film.is_owned else 'Mark as collected' }}</span>
+        </button>
+    </div>
+
+    <!-- Title + editions comparison -->
+    <div class="flex flex-1 flex-col gap-3">
+        <h1 class="text-2xl font-bold tracking-tight">{{ film.title }}</h1>
+        <p class="text-sm text-slate-400">
+            {{ film.editions|length }} edition{{ 's' if film.editions|length != 1 }} found across Platekompaniet and iMusic.
+            {% if film.cheapest_edition %}
+            Cheapest: <span class="font-semibold text-emerald-400">{{ film.cheapest_edition.price|nok }}</span>
+            <span class="text-slate-400">({{ film.cheapest_edition.display }}{% if film.cheapest_edition.region %}, {{ flags[film.cheapest_edition.region] or '' }} {{ film.cheapest_edition.region }}{% endif %})</span>
+            {% endif %}
+        </p>
+
+        <div class="overflow-hidden rounded-2xl border border-slate-800">
+            <table class="w-full text-left text-sm">
+                <thead class="bg-slate-900 text-xs uppercase tracking-wide text-slate-400">
+                    <tr>
+                        <th class="px-4 py-2">Edition</th>
+                        <th class="px-4 py-2">Region</th>
+                        <th class="px-4 py-2">Store</th>
+                        <th class="px-4 py-2">Price</th>
+                        <th class="px-4 py-2 text-right">Buy</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-800">
+                    {% for e in film.editions %}
+                    <tr class="bg-slate-900/40 hover:bg-slate-800/40
+                               {{ 'ring-1 ring-inset ring-emerald-500/40' if film.cheapest_edition and e.product_id == film.cheapest_edition.product_id }}">
+                        <td class="px-4 py-3 font-medium text-slate-100">
+                            {{ e.display }}
+                            {% if e.is_criterion_uk %}
+                            <span class="ml-1 rounded-full bg-amber-400/90 px-1.5 py-0.5 text-[10px] font-semibold text-amber-950">UK pressing</span>
+                            {% elif e.is_us_criterion %}
+                            <span class="ml-1 rounded-full bg-slate-700 px-1.5 py-0.5 text-[10px] font-semibold text-slate-200">US original</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-slate-300">{{ flags[e.region] or '' }} {{ e.region or '—' }}</td>
+                        <td class="px-4 py-3 text-slate-400">{{ e.source }}</td>
+                        <td class="px-4 py-3">
+                            <span class="font-bold {{ 'text-emerald-400' if film.cheapest_edition and e.product_id == film.cheapest_edition.product_id else 'text-slate-300' }}">{{ e.price|nok }}</span>
+                        </td>
+                        <td class="px-4 py-3 text-right">
+                            <a href="{{ e.url }}" target="_blank" rel="noopener"
+                               class="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark">View →</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="text-[11px] text-slate-500">
+            Region is inferred from each disc's barcode. UK editions (incl. UK Criterion pressings) usually
+            cost less delivered to Norway than a US import. iMusic editions without a label are shown by region.
+        </p>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -196,6 +196,7 @@ def _parse_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
         "ean": ean,
         "labels": labels,
         "norm_title": _norm_title(name),
+        "match_key": _match_key(name),
     }
 
 
@@ -219,9 +220,26 @@ def _norm_title(title: str) -> str:
     separate. We only strip format/edition noise, never the year.
     """
     t = (title or "").lower()
+    # Platekompaniet titles are "English Title (year) / Norwegian Title" — drop
+    # the Norwegian half so the same film matches across retailers (e.g. iMusic).
+    t = t.split(" / ")[0]
     t = _TITLE_NOISE.sub(" ", t)
     t = _NON_KEY.sub(" ", t)   # "(2008)" -> " 2008 " (year preserved)
     return re.sub(r"\s+", " ", t).strip()
+
+
+_YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _match_key(title: str) -> str:
+    """
+    Cross-retailer film key: like `_norm_title` but with the year removed.
+    Retailers disagree on the year (Platekompaniet uses the film year,
+    iMusic the disc release year), so it must be dropped to match the same
+    film across stores. Kept separate from `norm_title` so within-Platekompaniet
+    grouping can still keep remakes apart.
+    """
+    return re.sub(r"\s+", " ", _YEAR.sub(" ", _norm_title(title))).strip()
 
 
 def _assign_group_keys(items: dict[str, dict[str, Any]]) -> None:

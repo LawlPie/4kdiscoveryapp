@@ -55,9 +55,9 @@
              class="crit-poster group relative flex flex-col overflow-hidden rounded-2xl border
                     border-slate-800 bg-slate-900 transition hover:border-slate-700">
 
-        <!-- Poster (click = toggle collected) -->
-        <button type="button" onclick="toggleCollected('{{ f.product_id }}', this)"
-                class="relative block aspect-[2/3] w-full overflow-hidden bg-slate-800 text-left">
+        <!-- Poster (click = open comparison page) -->
+        <a href="/criterion/{{ f.product_id }}"
+           class="relative block aspect-[2/3] w-full overflow-hidden bg-slate-800">
             {% if f.image_url %}
             <img src="{{ f.image_url }}" alt="{{ f.title }}" loading="lazy"
                  class="poster-img h-full w-full object-cover transition duration-300" />
@@ -68,14 +68,23 @@
             <!-- Prioritised UK edition badge (with price when known) -->
             {% if f.uk_alt %}
             <span class="absolute left-2 top-2 rounded-full bg-amber-400/95 px-2 py-0.5 text-[11px] font-bold text-amber-950">
-                🇬🇧 UK{% if f.uk_alt.current_price %} · {{ f.uk_alt.current_price|nok }}{% endif %}
+                🇬🇧 UK{% if f.uk_alt.price %} · {{ f.uk_alt.price|nok }}{% endif %}
             </span>
             {% endif %}
+
+            <!-- Check-off button (separate from the poster link) -->
+            <button type="button" aria-label="Toggle collected"
+                    title="Mark as collected"
+                    onclick="event.preventDefault(); toggleCollected('{{ f.product_id }}', this)"
+                    class="collect-btn absolute right-2 top-2 z-10 grid h-9 w-9 place-items-center rounded-full
+                           bg-slate-950/70 text-lg text-slate-200 backdrop-blur transition hover:scale-110">
+                <span class="collect-icon">✓</span>
+            </button>
 
             <!-- Collected overlay (shown when owned) -->
             <span class="collected-overlay absolute inset-0 flex items-center justify-center
                          bg-emerald-600/55 text-5xl text-white opacity-0 transition">✓</span>
-        </button>
+        </a>
 
         <!-- Body -->
         <div class="flex flex-1 flex-col gap-1.5 p-3">
@@ -87,12 +96,12 @@
             {% if f.alternatives %}
             <div class="flex flex-wrap gap-1">
                 {% for a in f.alternatives %}
-                <a href="{{ a.url }}" target="_blank" rel="noopener"
-                   title="{{ a.label }} edition of the same film"
+                <a href="/criterion/{{ f.product_id }}"
+                   title="{{ a.display }} · {{ a.source }}"
                    class="rounded-full px-2 py-0.5 text-[10px] font-medium
                           {{ 'bg-amber-400/15 text-amber-300' if a.region == 'UK' else 'bg-slate-700/50 text-slate-300' }}">
                     {{ '🇬🇧' if a.region == 'UK' else ('🇦🇺' if a.region == 'AUS' else ('🇪🇺' if a.region == 'EU' else '🏷️')) }}
-                    {{ a.label }}{% if a.current_price %} · {{ a.current_price|nok }}{% endif %}
+                    {{ a.display }}{% if a.price %} · {{ a.price|nok }}{% endif %}
                 </a>
                 {% endfor %}
             </div>

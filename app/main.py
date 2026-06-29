@@ -240,6 +240,23 @@ def criterion(
     )
 
 
+@app.get("/criterion/{product_id}", response_class=HTMLResponse)
+def criterion_detail(request: Request, product_id: str):
+    """Comparison page for one Criterion film: every edition across both stores."""
+    film = db.get_criterion_film(product_id)
+    status = 200 if film else 404
+    return templates.TemplateResponse(
+        "criterion_detail.html",
+        {
+            "request": request,
+            "film": film,
+            "stats": db.get_stats(),
+            "active_view": "criterion",
+        },
+        status_code=status,
+    )
+
+
 @app.get("/movie/{product_id}", response_class=HTMLResponse)
 def movie_detail(request: Request, product_id: str):
     """Detail view: every edition of a release with prices, format flags, stock."""

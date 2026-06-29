@@ -18,6 +18,8 @@
 .crit-poster[data-collected="true"] .poster-img { opacity: 0.30; }
 .crit-poster[data-collected="true"] .collected-overlay { opacity: 1; }
 .crit-poster .collected-overlay { pointer-events: none; }
+/* The corner check button turns green once the film is collected. */
+.crit-poster[data-collected="true"] .collect-btn { background: #10b981; color: #022c22; }
 
 /* Custom scrollbar for a more "app-like" dark feel. */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
