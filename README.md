@@ -25,13 +25,13 @@ with Docker.
   compared against iMusic; cards flag "cheaper at iMusic" and each movie's detail
   page shows Platekompaniet vs iMusic per edition with the cheaper side
   highlighted. Both retailers price in NOK, so it's a direct comparison.
-- **🎞️ Criterion collector view** — a separate poster-grid tab listing every
-  Criterion Collection 4K (identified by Criterion's US barcode), with a
-  **🇬🇧 UK-alternative** flag when a UK Criterion pressing or boutique label
-  (Arrow, Second Sight, Powerhouse, …) released the same film. Click a poster for
-  a per-film **comparison page** showing every edition across **both retailers**
-  with region (from barcode) and price, cheapest highlighted. A corner button
-  checks off what you've collected.
+- **🎞️ Criterion collector view** — a separate tab listing every Criterion
+  Collection 4K (identified by Criterion's US barcode) as rich cards showing the
+  cheapest "from" price, iMusic price, edition count and a **🇬🇧 UK-alternative**
+  flag (UK Criterion pressing or boutique label — Arrow, Second Sight, …).
+  **Click a poster** to add it to your collection (it lifts and glows); click the
+  **title** for a per-film comparison page of every edition across **both
+  retailers**, cheapest highlighted. Sort by title, **year**, or cheapest price.
 - **❤️ Watchlist** — favourite any title; the heart toggles instantly via an
   async API call (no page reload).
 - **✓ Collection** — mark titles you already own; they're hidden from the

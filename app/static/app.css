@@ -14,12 +14,26 @@
     transition: transform 0.1s ease-out;
 }
 
-/* Criterion poster checklist: dim + check the films already collected. */
+/* Criterion grid card: clicking the poster collects the film — it lifts
+   forward and glows a lighter emerald. A distinct feel from the Trawler. */
+.crit-card {
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.crit-card .poster-btn { cursor: pointer; }
+.crit-card:hover { transform: translateY(-2px); }
+.crit-card[data-collected="true"] {
+    transform: translateY(-6px) scale(1.03);
+    border-color: rgba(110, 231, 183, 0.7);
+    box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.75),
+                0 18px 42px -12px rgba(16, 185, 129, 0.6);
+}
+.crit-card[data-collected="true"] .poster-img { filter: brightness(1.08); }
+.crit-card[data-collected="true"] .collected-check { opacity: 1; }
+
+/* Criterion detail page poster: dim + check when collected. */
 .crit-poster[data-collected="true"] .poster-img { opacity: 0.30; }
 .crit-poster[data-collected="true"] .collected-overlay { opacity: 1; }
 .crit-poster .collected-overlay { pointer-events: none; }
-/* The corner check button turns green once the film is collected. */
-.crit-poster[data-collected="true"] .collect-btn { background: #10b981; color: #022c22; }
 
 /* Custom scrollbar for a more "app-like" dark feel. */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

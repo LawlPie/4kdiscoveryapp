@@ -15,6 +15,7 @@ watchlist      : which products the user has favourited (a heart).
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -556,8 +557,8 @@ def _film_editions(conn: sqlite3.Connection, match_keys: list[str]) -> dict[str,
         return {}
     placeholders = ",".join("?" * len(match_keys))
     rows = conn.execute(
-        "SELECT product_id, title, url, current_price, image_url, labels, "
-        "match_key, ean, retailer FROM products "
+        "SELECT product_id, title, url, current_price, original_price, discount_pct, "
+        "image_url, labels, match_key, ean, retailer FROM products "
         f"WHERE match_key IN ({placeholders})",
         match_keys,
     ).fetchall()
@@ -583,6 +584,8 @@ def _film_editions(conn: sqlite3.Connection, match_keys: list[str]) -> dict[str,
             "display": display,
             "region": region,
             "price": d["current_price"],
+            "original_price": d["original_price"],
+            "discount_pct": d["discount_pct"],
             "url": d["url"],
             "product_id": d["product_id"],
             "ean": d["ean"],
@@ -656,8 +659,28 @@ def get_criterion_releases() -> list[dict[str, Any]]:
         p["has_uk_alt"] = bool(uk_alts)
         p["uk_alt"] = uk_alts[0] if uk_alts else None
         p["is_owned"] = owned_film.get(key, p["is_owned"])
+
+        # Headline figures for the card (cheapest across every edition + store).
+        priced = [e for e in eds if e["price"] is not None]
+        cheapest = min(priced, key=lambda e: e["price"]) if priced else None
+        p["edition_count"] = len(eds)
+        p["from_price"] = cheapest["price"] if cheapest else p.get("current_price")
+        p["from_original"] = cheapest["original_price"] if cheapest else None
+        p["from_discount"] = cheapest["discount_pct"] if cheapest else 0
+        im = [e["price"] for e in eds if e["source"] == "iMusic" and e["price"] is not None]
+        p["imusic_price"] = min(im) if im else None
+        p["year"] = _year_from_title(p["title"])
     films.sort(key=lambda p: p["title"].lower())
     return films
+
+
+_YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+
+
+def _year_from_title(title: str) -> int | None:
+    """Pull the film year out of a title like 'Mean Streets (1973) / …'."""
+    m = _YEAR_RE.search(title or "")
+    return int(m.group(0)) if m else None
 
 
 def get_criterion_film(product_id: str) -> dict[str, Any] | None:

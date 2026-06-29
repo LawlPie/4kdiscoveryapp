@@ -200,7 +200,11 @@ def owned(
 
 @app.get("/criterion", response_class=HTMLResponse)
 def criterion(
-    request: Request, q: Optional[str] = None, show: str = "all", page: int = 1
+    request: Request,
+    q: Optional[str] = None,
+    show: str = "all",
+    sort: str = "title",
+    page: int = 1,
 ):
     """Criterion Collection 4K checklist (poster view) with UK-alternative flags."""
     search = (q or "").strip().lower() or None
@@ -221,6 +225,15 @@ def criterion(
     elif show == "uk":
         films = [f for f in films if f["has_uk_alt"]]
 
+    _BIG = float("inf")
+    sorters = {
+        "title": lambda f: f["title"].lower(),
+        "year": lambda f: (f.get("year") is None, f.get("year") or 0, f["title"].lower()),
+        "year_desc": lambda f: (f.get("year") is None, -(f.get("year") or 0), f["title"].lower()),
+        "price": lambda f: (f.get("from_price") is None, f.get("from_price") or _BIG),
+    }
+    films = sorted(films, key=sorters.get(sort, sorters["title"]))
+
     pg = _paginate(len(films), page)
     page_items = films[pg["offset"]: pg["offset"] + pg["per_page"]]
 
@@ -233,8 +246,12 @@ def criterion(
             "stats": db.get_stats(),
             "q": search or "",
             "show": show,
+            "sort": sort,
             "pg": pg,
-            "base_query": _base_query(q=search or "", show=show if show != "all" else ""),
+            "base_query": _base_query(
+                q=search or "", show=show if show != "all" else "",
+                sort=sort if sort != "title" else "",
+            ),
             "active_view": "criterion",
         },
     )

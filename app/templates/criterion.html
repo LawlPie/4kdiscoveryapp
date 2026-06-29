@@ -9,11 +9,10 @@
         <h1 class="text-2xl font-bold tracking-tight">🎞️ Criterion Collection — 4K</h1>
         <p class="text-sm text-slate-400">
             Every Criterion 4K release (identified by Criterion's US barcode).
-            Click a poster to check off what you own. A
-            <span class="font-semibold text-amber-300">🇬🇧 UK badge</span> means a UK edition
-            of the same film exists — a UK Criterion pressing or a boutique label
-            (Arrow, Second Sight, …) — usually the cheaper option than importing
-            from the US.
+            <span class="font-semibold text-emerald-300">Click a poster</span> to add it to your
+            collection — it lifts and glows. A
+            <span class="font-semibold text-amber-300">🇬🇧 UK badge</span> means a cheaper UK edition
+            of the same film exists; click the <span class="font-semibold">title</span> to compare every edition.
         </p>
         <div class="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400">
             <span><strong class="text-slate-200">{{ summary.films }}</strong> films</span>
@@ -22,13 +21,23 @@
         </div>
     </div>
 
-    <!-- Search / filter bar -->
+    <!-- Search / filter / sort bar -->
     <form method="get" action="/criterion" class="flex flex-wrap items-end gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
         <label class="flex flex-grow flex-col gap-1 text-xs text-slate-400 sm:max-w-xs">
             Search title
             <input type="search" name="q" value="{{ q }}" placeholder="e.g. Mean Streets…"
                    class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100
                           placeholder:text-slate-500 focus:border-brand focus:outline-none" />
+        </label>
+        <label class="flex flex-col gap-1 text-xs text-slate-400">
+            Sort by
+            <select name="sort" onchange="this.form.submit()"
+                    class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100">
+                <option value="title"     {{ 'selected' if sort == 'title' }}>Title (A–Z)</option>
+                <option value="year"      {{ 'selected' if sort == 'year' }}>Year (old → new)</option>
+                <option value="year_desc" {{ 'selected' if sort == 'year_desc' }}>Year (new → old)</option>
+                <option value="price"     {{ 'selected' if sort == 'price' }}>Cheapest price</option>
+            </select>
         </label>
         <label class="flex flex-col gap-1 text-xs text-slate-400">
             Show
@@ -48,63 +57,63 @@
 </div>
 
 {% if films %}
-<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+<div class="grid grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
     {% for f in films %}
     <article id="crit-{{ f.product_id }}"
              data-collected="{{ 'true' if f.is_owned else 'false' }}"
-             class="crit-poster group relative flex flex-col overflow-hidden rounded-2xl border
-                    border-slate-800 bg-slate-900 transition hover:border-slate-700">
+             class="crit-card group relative flex flex-col overflow-hidden rounded-2xl border
+                    border-slate-800 bg-slate-900">
 
-        <!-- Poster (click = open comparison page) -->
-        <a href="/criterion/{{ f.product_id }}"
-           class="relative block aspect-[2/3] w-full overflow-hidden bg-slate-800">
+        <!-- Poster — click toggles collected (lifts + glows) -->
+        <button type="button" onclick="toggleCollected('{{ f.product_id }}', this)"
+                aria-label="Toggle collected" title="Click to add to / remove from your collection"
+                class="poster-btn relative block aspect-[2/3] w-full overflow-hidden bg-slate-800 text-left">
             {% if f.image_url %}
             <img src="{{ f.image_url }}" alt="{{ f.title }}" loading="lazy"
-                 class="poster-img h-full w-full object-cover transition duration-300" />
+                 class="poster-img h-full w-full object-cover" />
             {% else %}
             <div class="flex h-full w-full items-center justify-center text-4xl text-slate-600">🎞️</div>
             {% endif %}
 
-            <!-- Prioritised UK edition badge (with price when known) -->
-            {% if f.uk_alt %}
-            <span class="absolute left-2 top-2 rounded-full bg-amber-400/95 px-2 py-0.5 text-[11px] font-bold text-amber-950">
-                🇬🇧 UK{% if f.uk_alt.price %} · {{ f.uk_alt.price|nok }}{% endif %}
-            </span>
-            {% endif %}
+            <!-- Badges -->
+            <div class="absolute left-2 top-2 z-10 flex flex-col items-start gap-1">
+                {% if f.from_discount and f.from_discount > 0 %}
+                <span class="rounded-full bg-emerald-500 px-2 py-0.5 text-xs font-bold text-emerald-950">−{{ f.from_discount|round(0)|int }}%</span>
+                {% endif %}
+                {% if f.uk_alt %}
+                <span class="rounded-full bg-amber-400/95 px-2 py-0.5 text-[11px] font-bold text-amber-950">🇬🇧 UK{% if f.uk_alt.price %} · {{ f.uk_alt.price|nok }}{% endif %}</span>
+                {% endif %}
+                {% if f.edition_count and f.edition_count > 1 %}
+                <span class="rounded-full bg-slate-950/80 px-2 py-0.5 text-[11px] font-medium text-slate-200 backdrop-blur">{{ f.edition_count }} editions</span>
+                {% endif %}
+            </div>
 
-            <!-- Check-off button (separate from the poster link) -->
-            <button type="button" aria-label="Toggle collected"
-                    title="Mark as collected"
-                    onclick="event.preventDefault(); toggleCollected('{{ f.product_id }}', this)"
-                    class="collect-btn absolute right-2 top-2 z-10 grid h-9 w-9 place-items-center rounded-full
-                           bg-slate-950/70 text-lg text-slate-200 backdrop-blur transition hover:scale-110">
-                <span class="collect-icon">✓</span>
-            </button>
-
-            <!-- Collected overlay (shown when owned) -->
-            <span class="collected-overlay absolute inset-0 flex items-center justify-center
-                         bg-emerald-600/55 text-5xl text-white opacity-0 transition">✓</span>
-        </a>
+            <!-- Collected check (shown when in collection) -->
+            <span class="collected-check absolute right-2 top-2 z-10 grid h-9 w-9 place-items-center
+                         rounded-full bg-emerald-500 text-lg text-emerald-950 opacity-0 transition">✓</span>
+        </button>
 
         <!-- Body -->
         <div class="flex flex-1 flex-col gap-1.5 p-3">
-            <a href="{{ f.url }}" target="_blank" rel="noopener"
+            <a href="/criterion/{{ f.product_id }}"
                class="line-clamp-2 text-sm font-semibold leading-snug text-slate-100 hover:text-brand">
-                {{ f.title }}
+                {{ f.title }}{% if f.year %} <span class="text-slate-500">({{ f.year }})</span>{% endif %}
             </a>
 
-            {% if f.alternatives %}
-            <div class="flex flex-wrap gap-1">
-                {% for a in f.alternatives %}
-                <a href="/criterion/{{ f.product_id }}"
-                   title="{{ a.display }} · {{ a.source }}"
-                   class="rounded-full px-2 py-0.5 text-[10px] font-medium
-                          {{ 'bg-amber-400/15 text-amber-300' if a.region == 'UK' else 'bg-slate-700/50 text-slate-300' }}">
-                    {{ '🇬🇧' if a.region == 'UK' else ('🇦🇺' if a.region == 'AUS' else ('🇪🇺' if a.region == 'EU' else '🏷️')) }}
-                    {{ a.display }}{% if a.price %} · {{ a.price|nok }}{% endif %}
-                </a>
-                {% endfor %}
+            <!-- Price -->
+            <div class="mt-auto flex items-baseline gap-2">
+                {% if f.edition_count and f.edition_count > 1 %}<span class="text-[11px] text-slate-500">from</span>{% endif %}
+                <span class="text-lg font-bold text-emerald-400">{{ f.from_price|nok }}</span>
+                {% if f.from_original and f.from_original > (f.from_price or 0) %}
+                <span class="text-sm text-slate-500 line-through">{{ f.from_original|nok }}</span>
+                {% endif %}
             </div>
+
+            {% if f.imusic_price %}
+            <div class="text-[11px] text-slate-500">iMusic: <span class="font-semibold">{{ f.imusic_price|nok }}</span></div>
+            {% endif %}
+            {% if f.stock_status %}
+            <span class="text-[11px] text-slate-500">📦 {{ f.stock_status }}</span>
             {% endif %}
         </div>
     </article>
