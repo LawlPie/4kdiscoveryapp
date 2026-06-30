@@ -99,9 +99,15 @@ class Settings:
     IMUSIC_MAX_PAGES: int = _get_int("IMUSIC_MAX_PAGES", 80)  # 100 items/page
     IMUSIC_PAGE_SIZE: int = _get_int("IMUSIC_PAGE_SIZE", 100)
 
-    # How often the background scraper runs, in hours.
+    # The scraper runs once daily at SCRAPE_HOUR:SCRAPE_MINUTE in SCRAPE_TIMEZONE
+    # (early morning by default — fresh overnight deals, low traffic).
+    SCRAPE_HOUR: int = _get_int("SCRAPE_HOUR", 5)
+    SCRAPE_MINUTE: int = _get_int("SCRAPE_MINUTE", 0)
+    SCRAPE_TIMEZONE: str = os.getenv("SCRAPE_TIMEZONE", os.getenv("TZ", "Europe/Oslo"))
+    # Treat data as stale (and worth scraping on startup) once it's this old.
     SCRAPE_INTERVAL_HOURS: float = _get_float("SCRAPE_INTERVAL_HOURS", 24.0)
-    # Run a scrape immediately on startup (handy for a fresh install).
+    # On startup, scrape ONLY if the existing data is stale/empty — so a routine
+    # container restart does NOT trigger a fresh scrape every time.
     SCRAPE_ON_STARTUP: bool = _get_bool("SCRAPE_ON_STARTUP", True)
 
     # Politeness knobs to avoid hammering the retailer / getting IP-blocked.

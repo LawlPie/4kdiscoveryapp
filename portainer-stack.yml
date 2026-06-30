@@ -45,6 +45,9 @@ services:
 
     environment:
       # ----- Scraper (queries Platekompaniet's Algolia backend) -----
+      # Daily scrape time (restarts don't re-scrape unless data is stale).
+      SCRAPE_HOUR: "${SCRAPE_HOUR:-5}"
+      SCRAPE_TIMEZONE: "${SCRAPE_TIMEZONE:-Europe/Oslo}"
       SCRAPE_INTERVAL_HOURS: "${SCRAPE_INTERVAL_HOURS:-24}"
       SCRAPE_ON_STARTUP: "${SCRAPE_ON_STARTUP:-true}"
       SCRAPE_FULL_CATALOGUE: "${SCRAPE_FULL_CATALOGUE:-true}"

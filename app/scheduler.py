@@ -3,18 +3,19 @@ Background scheduler.
 
 Uses APScheduler's `BackgroundScheduler` so the scrape job runs inside the same
 container/process as the web server — no separate cron daemon required. The job
-runs on a configurable interval (default 24h) and can be triggered on demand
-from the web UI.
+runs once a day at a fixed local time (default 05:00 Europe/Oslo) and can be
+triggered on demand from the web UI. A routine container restart does NOT
+re-scrape; we only scrape on startup when the stored data is stale or empty.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 from .config import settings
 from .imusic_scraper import run_imusic_scrape
@@ -66,32 +67,59 @@ def get_last_result() -> dict | None:
     return _last_result
 
 
+def _data_is_stale() -> bool:
+    """True if there's no scraped data yet, or it's older than the interval."""
+    from .database import get_stats
+
+    last = get_stats().get("last_updated")
+    if not last:
+        return True
+    try:
+        dt = datetime.fromisoformat(last)
+    except ValueError:
+        return True
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - dt
+    return age > timedelta(hours=settings.SCRAPE_INTERVAL_HOURS)
+
+
 def start_scheduler() -> None:
-    """Initialise the scheduler and register the recurring scrape job."""
+    """Register the daily scrape job; scrape now only if data is stale/empty."""
     global _scheduler
     if _scheduler is not None:
         return
 
-    _scheduler = BackgroundScheduler(timezone="UTC")
-    interval_seconds = int(settings.SCRAPE_INTERVAL_HOURS * 3600)
+    try:
+        _scheduler = BackgroundScheduler(timezone=settings.SCRAPE_TIMEZONE)
+    except Exception:
+        logger.warning(
+            "Unknown timezone %r; falling back to UTC.", settings.SCRAPE_TIMEZONE
+        )
+        _scheduler = BackgroundScheduler(timezone="UTC")
+
     _scheduler.add_job(
         _job,
-        trigger=IntervalTrigger(seconds=interval_seconds),
+        trigger=CronTrigger(hour=settings.SCRAPE_HOUR, minute=settings.SCRAPE_MINUTE),
         id="scrape-4k",
-        name="Scrape Platekompaniet 4K deals",
+        name="Daily 4K scrape",
         max_instances=1,
         coalesce=True,
         replace_existing=True,
     )
     _scheduler.start()
     logger.info(
-        "Scheduler started — scraping every %.1f hour(s).",
-        settings.SCRAPE_INTERVAL_HOURS,
+        "Scheduler started — daily scrape at %02d:%02d %s.",
+        settings.SCRAPE_HOUR, settings.SCRAPE_MINUTE, settings.SCRAPE_TIMEZONE,
     )
 
-    if settings.SCRAPE_ON_STARTUP:
-        logger.info("Running initial scrape on startup...")
+    # Only scrape on startup when there's nothing fresh — so restarting the
+    # container does not kick off a scrape every time.
+    if settings.SCRAPE_ON_STARTUP and _data_is_stale():
+        logger.info("No fresh data found — running an initial scrape now.")
         trigger_scrape_async()
+    else:
+        logger.info("Recent data present — next scrape at the scheduled time.")
 
 
 def shutdown_scheduler() -> None:

@@ -40,8 +40,10 @@ with Docker.
 - **📈 Price history** — every price change is logged to `price_history`.
 - **🔔 Notifications** — rich Discord embeds or Telegram messages when a
   favourited item gets cheaper or a new campaign starts.
-- **🕒 Scheduled scraper** — runs every 24 h (configurable) in-process via
-  APScheduler; also triggerable on demand from the UI.
+- **🕒 Scheduled scraper** — runs once a day at a set local time (default 05:00
+  Europe/Oslo) in-process via APScheduler; also triggerable on demand from the
+  UI. A routine container restart does **not** re-scrape — it only scrapes on
+  startup when the stored data is stale or empty.
 - **🐳 One-container deploy** — `Dockerfile` + `docker-compose.yml` included.
 
 ---
@@ -126,8 +128,10 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 
 | Variable | Default | Description |
 |---|---|---|
-| `SCRAPE_INTERVAL_HOURS` | `24` | How often the scraper runs |
-| `SCRAPE_ON_STARTUP` | `true` | Run once immediately on boot |
+| `SCRAPE_HOUR` / `SCRAPE_MINUTE` | `5` / `0` | Daily scrape time (local) |
+| `SCRAPE_TIMEZONE` | `Europe/Oslo` | Timezone for the daily scrape |
+| `SCRAPE_INTERVAL_HOURS` | `24` | Data older than this is "stale" (startup-scrape threshold) |
+| `SCRAPE_ON_STARTUP` | `true` | On boot, scrape only if data is stale/empty |
 | `SCRAPE_FULL_CATALOGUE` | `true` | Fetch **all** ~6500 4K titles (bisects the id space to beat Algolia's 1000-cap). Set `false` for the faster top-popular subset |
 | `SCRAPE_MAX_ITEMS` | `1000` | Cap for the top-popular mode only (ignored in full mode) |
 | `SCRAPE_ONLY_ON_OFFER` | `false` | Store only items currently on offer/campaign |

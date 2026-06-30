@@ -36,9 +36,28 @@ logging.basicConfig(
 logger = logging.getLogger("app")
 
 
+class _QuietAccessFilter(logging.Filter):
+    """
+    Drop access-log lines for noisy, uninteresting endpoints — chiefly the
+    container healthcheck hitting /health every 30s, plus static assets and
+    favicon. Real page/API requests are still logged.
+    """
+
+    _QUIET = ("/health", "/static/", "/favicon.ico")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(path in msg for path in self._QUIET)
+
+
+def _quiet_access_logs() -> None:
+    logging.getLogger("uvicorn.access").addFilter(_QuietAccessFilter())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialise the DB + scheduler on startup, tear down on shutdown."""
+    _quiet_access_logs()
     db.init_db()
     start_scheduler()
     yield
