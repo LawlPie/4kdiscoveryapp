@@ -217,12 +217,13 @@ def watchlist(
 def owned(
     request: Request, sort: str = "title", q: Optional[str] = None, page: int = 1
 ):
-    """The Collection view — movies the user already owns."""
+    """The Collection view — movies the user already owns (grouped per film)."""
     search = (q or "").strip() or None
     filters = dict(only_owned=True, search=search)
-    pg = _paginate(db.count_products(**filters), page)
+    # Group editions so a collected film shows as ONE card (like the Trawler).
+    pg = _paginate(db.count_products(grouped=True, **filters), page)
     products = db.list_products(
-        **filters, sort=sort, limit=pg["per_page"], offset=pg["offset"]
+        **filters, sort=sort, grouped=True, limit=pg["per_page"], offset=pg["offset"]
     )
     return templates.TemplateResponse(
         "owned.html",
@@ -370,12 +371,16 @@ def api_toggle_favorite(product_id: str):
 
 
 @app.post("/api/owned/{product_id}")
-def api_toggle_owned(product_id: str):
-    """Toggle a product's owned/collection flag (called from the 'Own it' button)."""
+def api_toggle_owned(product_id: str, group: int = 0):
+    """
+    Toggle a product's owned/collection flag. With `group=1`, toggle every
+    edition that shares the film's group (the Trawler/Collection grouping), so
+    collecting a film marks all its editions at once.
+    """
     product = db.get_product(product_id)
     if product is None:
         return JSONResponse({"error": "not found"}, status_code=404)
-    new_state = db.toggle_owned(product_id)
+    new_state = db.toggle_owned_group(product_id) if group else db.toggle_owned(product_id)
     # Marking owned clears the favourite flag (mutually exclusive).
     return {
         "product_id": product_id,

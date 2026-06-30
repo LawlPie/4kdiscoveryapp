@@ -3,7 +3,7 @@
   Renders a single 4K release with image, price, discount badge, campaign
   tags, stock status, and an interactive heart toggle.
 #}
-{% macro product_card(p) %}
+{% macro product_card(p, group_owned=false) %}
 <article id="card-{{ p.product_id }}"
          class="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-800
                 bg-slate-900 shadow-sm transition hover:border-slate-700 hover:shadow-lg">
@@ -31,9 +31,9 @@
     <div class="absolute right-3 top-3 z-10 flex gap-1.5">
         <!-- Own it / already in collection -->
         <button type="button"
-                onclick="toggleOwned('{{ p.product_id }}', this)"
+                onclick="toggleOwned('{{ p.product_id }}', this, {{ 'true' if group_owned else 'false' }})"
                 aria-label="Mark as owned"
-                title="{{ 'In your collection — click to remove' if p.is_owned else 'Mark as owned' }}"
+                title="{{ ('In your collection — click to remove' if p.is_owned else 'Add all editions to collection') if group_owned else ('In your collection — click to remove' if p.is_owned else 'Mark as owned') }}"
                 data-owned="{{ 'true' if p.is_owned else 'false' }}"
                 class="owned-btn grid h-9 w-9 place-items-center rounded-full text-base
                        backdrop-blur transition hover:scale-110

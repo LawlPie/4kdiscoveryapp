@@ -861,6 +861,46 @@ def toggle_owned(product_id: str) -> bool:
     return set_owned(product_id, product_id not in owned)
 
 
+def toggle_owned_group(product_id: str) -> bool | None:
+    """
+    Flip the owned flag for EVERY Platekompaniet edition that shares this
+    product's group (the same editions collapsed into one card on the Trawler),
+    so collecting a film marks all its editions at once. Returns the new state,
+    or None if the product is missing.
+    """
+    product = get_product(product_id)
+    if product is None:
+        return None
+    group_key = product.get("group_key")
+    new_state = not bool(product.get("is_owned"))
+    now = _utcnow()
+    with db_session() as conn:
+        if group_key:
+            ids = [
+                r["product_id"]
+                for r in conn.execute(
+                    "SELECT product_id FROM products "
+                    "WHERE group_key = ? AND retailer = 'platekompaniet'",
+                    (group_key,),
+                )
+            ]
+        else:
+            ids = [product_id]
+        for pid in ids:
+            if new_state:
+                conn.execute(
+                    "INSERT INTO watchlist (product_id, is_favorited, is_owned, created_at) "
+                    "VALUES (?, 0, 1, ?) "
+                    "ON CONFLICT(product_id) DO UPDATE SET is_owned = 1, is_favorited = 0",
+                    (pid, now),
+                )
+            else:
+                conn.execute(
+                    "UPDATE watchlist SET is_owned = 0 WHERE product_id = ?", (pid,)
+                )
+    return new_state
+
+
 def get_stats() -> dict[str, Any]:
     """Small dashboard summary used in the header (cached briefly)."""
     return _cached("stats", ttl=30.0, producer=_compute_stats)

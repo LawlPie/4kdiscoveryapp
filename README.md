@@ -34,7 +34,9 @@ with Docker.
   retailers**, cheapest highlighted. Sort by title, **year**, or cheapest price.
 - **❤️ Watchlist** — favourite any title; the heart toggles instantly via an
   async API call (no page reload).
-- **✓ Collection** — mark titles you already own; they're hidden from the
+- **✓ Collection** — mark films you already own from the Trawler; this collects
+  **all editions** of that film at once (the same ones grouped on the card). The
+  Collection view shows one card per film. Owned films are hidden from the
   Trawler/Watchlist and skipped by the scraper (favourite & owned are mutually
   exclusive).
 - **📈 Price history** — every price change is logged to `price_history`.

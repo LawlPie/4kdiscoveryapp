@@ -87,12 +87,14 @@ async function toggleFavorite(productId, btn) {
 /**
  * Toggle a product's owned/collection state. Owned items are hidden from the
  * Trawler and Watchlist, so the card is removed there when marked owned (and
- * removed from the Collection view when un-marked).
+ * removed from the Collection view when un-marked). When `group` is true, every
+ * edition of the film (the same ones grouped on the card) is toggled together.
  */
-async function toggleOwned(productId, btn) {
+async function toggleOwned(productId, btn, group = false) {
     btn.disabled = true;
     try {
-        const resp = await fetch(`/api/owned/${encodeURIComponent(productId)}`, {
+        const url = `/api/owned/${encodeURIComponent(productId)}` + (group ? "?group=1" : "");
+        const resp = await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
         });
